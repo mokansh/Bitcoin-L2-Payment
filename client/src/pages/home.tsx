@@ -422,11 +422,17 @@ function FundAddressSection() {
                 <span className="text-muted-foreground">Confirmations</span>
                 <span>{confirmations}/1</span>
               </div>
-              <div className="flex justify-between items-start">
+              <div className="flex justify-between items-start gap-2">
                 <span className="text-muted-foreground">TxID</span>
-                <code className="font-mono text-xs text-right max-w-[200px] break-all">
+                <a 
+                  href={`https://mempool.space/testnet/tx/${pendingTx.txid}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-right max-w-[200px] break-all text-blue-500 hover:text-blue-600 hover:underline flex items-center gap-1"
+                >
                   {formatAddress(pendingTx.txid, 12)}
-                </code>
+                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                </a>
               </div>
             </div>
 

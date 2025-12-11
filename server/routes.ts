@@ -3,20 +3,106 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertWalletSchema, insertTransactionSchema, insertMerchantSchema } from "@shared/schema";
 import { z } from "zod";
+import * as bitcoin from "bitcoinjs-lib";
+import * as crypto from "crypto";
+import * as tinysecp256k1 from "tiny-secp256k1";
+import { Taptree } from "bitcoinjs-lib/src/types";
+import dotenv from "dotenv";
 
-// Placeholder Bitcoin functions
-function generateTaprootAddress(bytestreamPublicKey: string, userPublicKey: string): string {
-  const combined = bytestreamPublicKey + userPublicKey;
-  const hash = Array.from(combined).reduce((acc, char) => {
-    return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
-  }, 0);
-  
-  const chars = "0123456789abcdefghjkmnpqrstuvwxyz";
-  let address = "bc1p";
-  for (let i = 0; i < 58; i++) {
-    address += chars[Math.abs((hash * (i + 1)) % 32)];
+// Initialize environment variables
+dotenv.config();
+
+// Initialize ECC library for Bitcoin
+bitcoin.initEccLib(tinysecp256k1);
+
+// Bitcoin Taproot address generation function
+function generateTaprootAddress(userPublicKey: string, network = bitcoin.networks.testnet): string {
+  try {
+    const bytestreamPublicKey = process.env.BYTE_PUB_KEY;
+    const internalKey = process.env.INTERNAL_KEY;
+
+    if (!internalKey) {
+      throw new Error("INTERNAL_KEY environment variable is not set");
+    }
+    const internalKeyBuffer = Buffer.from(internalKey, "hex");
+
+    // Derive internal x-only pubkey from private scalar
+    const internalPub = tinysecp256k1.pointFromScalar(internalKeyBuffer, true); // compressed (33 bytes)
+    if (!internalPub) {
+      throw new Error("Failed to derive internal pubkey");
+    }
+    
+    const internalPubBuffer = Buffer.from(internalPub);
+    
+    // Get parity bit (0 if y is even, 1 if y is odd)
+    // The full pubkey is 33 bytes: [prefix][x-coord]
+    // prefix 0x02 = even y, prefix 0x03 = odd y
+    const keyParity = internalPubBuffer[0] === 0x03 ? 1 : 0;
+    
+    const internalX = internalPubBuffer.slice(1, 33); // x-only
+
+    // Convert hex public keys to buffers
+    if (!bytestreamPublicKey || !userPublicKey) {
+      throw new Error("Both bytestreamPublicKey and userPublicKey are required");
+    }
+    
+    const keyABuffer = Buffer.from(bytestreamPublicKey, "hex");
+    const keyBBuffer = Buffer.from(userPublicKey, "hex");
+
+    // Ensure the provided public keys are x-only (32 bytes) for Taproot script-path
+    // Accept either 33-byte compressed pubkeys or already x-only 32-byte buffers
+    const toXOnly = (pk: Buffer) => {
+      if (!Buffer.isBuffer(pk)) pk = Buffer.from(pk);
+      if (pk.length === 33) return pk.slice(1, 33);
+      if (pk.length === 32) return pk;
+      throw new Error("Unsupported public key length: " + pk.length);
+    };
+
+    const keyAX = toXOnly(keyABuffer);
+    const keyBX = toXOnly(keyBBuffer);
+
+    const multisigScript = bitcoin.script.compile([
+      keyAX,
+      bitcoin.opcodes.OP_CHECKSIGVERIFY,
+      keyBX,
+      bitcoin.opcodes.OP_CHECKSIG,
+    ]);
+
+    const timelockScript = bitcoin.script.compile([
+      bitcoin.script.number.encode(5),
+      bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+      bitcoin.opcodes.OP_DROP,
+      keyAX,
+      bitcoin.opcodes.OP_CHECKSIG,
+    ]);
+
+    const scriptTree: Taptree = [
+      {
+        output: multisigScript,
+        version: 192,
+      },
+      {
+        output: timelockScript,
+        version: 192,
+      },
+    ];
+
+    const p2tr = bitcoin.payments.p2tr({
+      internalPubkey: internalX,
+      scriptTree: scriptTree,
+      network: network,
+    });
+
+    if (!p2tr.address) {
+      throw new Error("Failed to generate Taproot address");
+    }
+
+    console.log("Generated Taproot Address:", p2tr.address);
+    return p2tr.address;
+  } catch (error) {
+    console.error("Error generating Taproot address:", error);
+    throw error;
   }
-  return address;
 }
 
 function getBitcoinTxStatus(txid: string): { confirmed: boolean; confirmations: number; blockHeight?: number } {
@@ -92,16 +178,14 @@ export async function registerRoutes(
       }
 
       const { userPublicKey } = req.body;
+
       if (!userPublicKey) {
         return res.status(400).json({ error: "User public key is required" });
       }
 
-      // Generate bytestream public key (in production, this would be derived properly)
-      const bytestreamPublicKey = Array.from({ length: 64 }, () => 
-        "0123456789abcdef"[Math.floor(Math.random() * 16)]
-      ).join("");
+      const bytestreamPublicKey = process.env.BYTE_PUB_KEY;
 
-      const taprootAddress = generateTaprootAddress(bytestreamPublicKey, userPublicKey);
+      const taprootAddress = generateTaprootAddress(userPublicKey);
 
       const updated = await storage.updateWallet(wallet.id, {
         taprootAddress,

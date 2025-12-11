@@ -4,6 +4,9 @@ import {
   type Transaction, type InsertTransaction,
   type Merchant, type InsertMerchant
 } from "@shared/schema";
+import {
+  type L2Commitment, type InsertL2Commitment
+} from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -31,6 +34,13 @@ export interface IStorage {
   getMerchantsByWalletId(walletId: string): Promise<Merchant[]>;
   createMerchant(merchant: InsertMerchant): Promise<Merchant>;
   deleteMerchant(id: string): Promise<boolean>;
+  
+  // L2 Commitments
+  getL2Commitment(id: string): Promise<L2Commitment | undefined>;
+  getLatestL2CommitmentByWalletId(walletId: string): Promise<L2Commitment | undefined>;
+  getL2CommitmentsByWalletId(walletId: string): Promise<L2Commitment[]>;
+  createL2Commitment(commitment: InsertL2Commitment): Promise<L2Commitment>;
+  updateL2Commitment(id: string, updates: Partial<L2Commitment>): Promise<L2Commitment | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -38,12 +48,14 @@ export class MemStorage implements IStorage {
   private wallets: Map<string, Wallet>;
   private transactions: Map<string, Transaction>;
   private merchants: Map<string, Merchant>;
+  private l2Commitments: Map<string, L2Commitment>;
 
   constructor() {
     this.users = new Map();
     this.wallets = new Map();
     this.transactions = new Map();
     this.merchants = new Map();
+    this.l2Commitments = new Map();
   }
 
   // Users
@@ -169,6 +181,49 @@ export class MemStorage implements IStorage {
 
   async deleteMerchant(id: string): Promise<boolean> {
     return this.merchants.delete(id);
+  }
+
+  // L2 Commitments
+  async getL2Commitment(id: string): Promise<L2Commitment | undefined> {
+    return this.l2Commitments.get(id);
+  }
+
+  async getLatestL2CommitmentByWalletId(walletId: string): Promise<L2Commitment | undefined> {
+    const commitments = Array.from(this.l2Commitments.values())
+      .filter((c) => c.walletId === walletId)
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return commitments[0];
+  }
+
+  async getL2CommitmentsByWalletId(walletId: string): Promise<L2Commitment[]> {
+    return Array.from(this.l2Commitments.values())
+      .filter((c) => c.walletId === walletId)
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }
+
+  async createL2Commitment(insertCommitment: InsertL2Commitment): Promise<L2Commitment> {
+    const id = randomUUID();
+    const commitment: L2Commitment = {
+      id,
+      walletId: insertCommitment.walletId,
+      merchantAddress: insertCommitment.merchantAddress,
+      amount: insertCommitment.amount,
+      psbt: insertCommitment.psbt,
+      userSignedPsbt: insertCommitment.userSignedPsbt,
+      settled: insertCommitment.settled,
+      settlementTxid: insertCommitment.settlementTxid,
+      createdAt: new Date(),
+    };
+    this.l2Commitments.set(id, commitment);
+    return commitment;
+  }
+
+  async updateL2Commitment(id: string, updates: Partial<L2Commitment>): Promise<L2Commitment | undefined> {
+    const commitment = this.l2Commitments.get(id);
+    if (!commitment) return undefined;
+    const updated = { ...commitment, ...updates };
+    this.l2Commitments.set(id, updated);
+    return updated;
   }
 }
 

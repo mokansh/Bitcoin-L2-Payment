@@ -27,6 +27,18 @@ export const transactions = pgTable("transactions", {
   confirmations: integer("confirmations").default(0),
 });
 
+export const l2Commitments = pgTable("l2_commitments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  walletId: varchar("wallet_id").notNull(),
+  merchantAddress: text("merchant_address").notNull(),
+  amount: numeric("amount").notNull(),
+  psbt: text("psbt").notNull(),
+  userSignedPsbt: text("user_signed_psbt"),
+  settled: text("settled").default("false"),
+  settlementTxid: text("settlement_txid"),
+  createdAt: timestamp("created_at").default(sql`now()`),
+});
+
 export const merchants = pgTable("merchants", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
@@ -61,6 +73,16 @@ export const insertMerchantSchema = createInsertSchema(merchants).pick({
   paymentUrl: true,
 });
 
+export const insertL2CommitmentSchema = createInsertSchema(l2Commitments).pick({
+  walletId: true,
+  merchantAddress: true,
+  amount: true,
+  psbt: true,
+  userSignedPsbt: true,
+  settled: true,
+  settlementTxid: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -72,3 +94,6 @@ export type Transaction = typeof transactions.$inferSelect;
 
 export type InsertMerchant = z.infer<typeof insertMerchantSchema>;
 export type Merchant = typeof merchants.$inferSelect;
+
+export type InsertL2Commitment = z.infer<typeof insertL2CommitmentSchema>;
+export type L2Commitment = typeof l2Commitments.$inferSelect;

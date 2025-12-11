@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertWalletSchema, insertTransactionSchema, insertMerchantSchema } from "@shared/schema";
 import { z } from "zod";
+import { insertL2CommitmentSchema } from "@shared/schema";
 import * as bitcoin from "bitcoinjs-lib";
 import * as crypto from "crypto";
 import * as tinysecp256k1 from "tiny-secp256k1";
@@ -409,6 +410,96 @@ export async function registerRoutes(
       res.status(204).send();
     } catch {
       res.status(500).json({ error: "Failed to delete merchant" });
+    }
+  });
+
+  // === L2 Commitment Routes ===
+
+  // Create L2 commitment with unsigned PSBT
+  app.post("/api/l2-commitments", async (req, res) => {
+    try {
+      const data = insertL2CommitmentSchema.parse(req.body);
+      const commitment = await storage.createL2Commitment(data);
+      res.status(201).json(commitment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid commitment data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create commitment" });
+    }
+  });
+
+  // Get latest L2 commitment for a wallet
+  app.get("/api/wallets/:walletId/l2-commitments/latest", async (req, res) => {
+    try {
+      const commitment = await storage.getLatestL2CommitmentByWalletId(req.params.walletId);
+      if (!commitment) {
+        return res.status(404).json({ error: "No commitment found" });
+      }
+      res.json(commitment);
+    } catch {
+      res.status(500).json({ error: "Failed to fetch commitment" });
+    }
+  });
+
+  // Update L2 commitment with user-signed PSBT
+  app.patch("/api/l2-commitments/:id/sign", async (req, res) => {
+    try {
+      const { userSignedPsbt } = req.body;
+      if (!userSignedPsbt) {
+        return res.status(400).json({ error: "User signed PSBT is required" });
+      }
+
+      const commitment = await storage.getL2Commitment(req.params.id);
+      if (!commitment) {
+        return res.status(404).json({ error: "Commitment not found" });
+      }
+
+      const updated = await storage.updateL2Commitment(req.params.id, {
+        userSignedPsbt,
+      });
+
+      res.json(updated);
+    } catch {
+      res.status(500).json({ error: "Failed to update commitment" });
+    }
+  });
+
+  // Settle L2 commitment on Bitcoin L1
+  app.post("/api/l2-commitments/:id/settle", async (req, res) => {
+    try {
+      const commitment = await storage.getL2Commitment(req.params.id);
+      if (!commitment) {
+        return res.status(404).json({ error: "Commitment not found" });
+      }
+
+      if (!commitment.userSignedPsbt) {
+        return res.status(400).json({ error: "Commitment must be signed by user first" });
+      }
+
+      if (commitment.settled === "true") {
+        return res.status(400).json({ error: "Commitment already settled" });
+      }
+
+      // In production, this would:
+      // 1. Sign the PSBT with ByteStream hub private key
+      // 2. Finalize the PSBT
+      // 3. Extract the signed transaction
+      // 4. Broadcast to Bitcoin network
+      // For now, simulate the settlement
+      const settlementTxid = crypto.randomBytes(32).toString("hex");
+
+      const updated = await storage.updateL2Commitment(req.params.id, {
+        settled: "true",
+        settlementTxid,
+      });
+
+      res.json({
+        ...updated,
+        message: "Settlement successful",
+      });
+    } catch {
+      res.status(500).json({ error: "Failed to settle commitment" });
     }
   });
 

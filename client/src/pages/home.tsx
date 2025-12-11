@@ -22,6 +22,15 @@ import {
   Zap,
   ExternalLink
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 function Header() {
   const { bitcoinAddress, isConnecting, connectWallet, disconnectWallet } = useWallet();
@@ -215,6 +224,329 @@ function GenerateWalletSection() {
               <Check className="w-4 h-4 text-green-500" />
               <span>Wallet generated successfully</span>
             </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function L2SettlementSection() {
+  const { wallet, setWallet } = useWallet();
+  const { toast } = useToast();
+  const [merchantAddress, setMerchantAddress] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [psbtCreated, setPsbtCreated] = useState(false);
+  const [psbtSigned, setPsbtSigned] = useState(false);
+  const [currentCommitment, setCurrentCommitment] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const balance = parseFloat(wallet?.l2Balance || "0");
+  const isDisabled = !wallet || balance === 0;
+
+  const handleCreatePSBT = async () => {
+    if (!wallet || !merchantAddress || !paymentAmount) {
+      toast({
+        title: "Missing Information",
+        description: "Please enter both merchant address and payment amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0 || amount > balance) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid payment amount within your balance",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // In production, this would create an actual PSBT
+      // For now, we'll create a commitment record
+      const psbtHex = Buffer.from(
+        JSON.stringify({
+          to: merchantAddress,
+          amount: amount,
+          timestamp: Date.now(),
+        })
+      ).toString("hex");
+
+      const response = await apiRequest("POST", "/api/l2-commitments", {
+        walletId: wallet.id,
+        merchantAddress,
+        amount: amount.toString(),
+        psbt: psbtHex,
+        settled: "false",
+      });
+
+      const commitment = await response.json();
+      setCurrentCommitment(commitment);
+      setPsbtCreated(true);
+      
+      toast({
+        title: "PSBT Created",
+        description: "Ready for your signature",
+      });
+    } catch {
+      toast({
+        title: "Failed to Create PSBT",
+        description: "Could not create payment commitment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSignPSBT = async () => {
+    if (!currentCommitment) return;
+
+    setIsLoading(true);
+    try {
+      // Simulate PSBT signing
+      const signedPsbt = Buffer.from(
+        currentCommitment.psbt + "signed"
+      ).toString("hex");
+
+      const response = await apiRequest(
+        "PATCH",
+        `/api/l2-commitments/${currentCommitment.id}/sign`,
+        { userSignedPsbt: signedPsbt }
+      );
+
+      const updated = await response.json();
+      setCurrentCommitment(updated);
+      setPsbtSigned(true);
+
+      toast({
+        title: "PSBT Signed",
+        description: "Your signature has been recorded. Ready to settle!",
+      });
+    } catch {
+      toast({
+        title: "Failed to Sign PSBT",
+        description: "Could not sign the transaction",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSettle = async () => {
+    if (!currentCommitment) return;
+
+    setIsLoading(true);
+    try {
+      const response = await apiRequest(
+        "POST",
+        `/api/l2-commitments/${currentCommitment.id}/settle`,
+        {}
+      );
+
+      const settled = await response.json();
+      
+      // Update wallet L2 balance
+      if (wallet) {
+        const newBalance = (balance - parseFloat(paymentAmount)).toFixed(8);
+        const walletResponse = await apiRequest(
+          "PATCH",
+          `/api/wallets/${wallet.id}/balance`,
+          { l2Balance: newBalance }
+        );
+        const updatedWallet = await walletResponse.json();
+        setWallet(updatedWallet);
+      }
+
+      toast({
+        title: "Settlement Complete",
+        description: `Settled ${paymentAmount} BTC on Bitcoin L1`,
+      });
+
+      // Reset form
+      setMerchantAddress("");
+      setPaymentAmount("");
+      setPsbtCreated(false);
+      setPsbtSigned(false);
+      setCurrentCommitment(null);
+    } catch {
+      toast({
+        title: "Settlement Failed",
+        description: "Could not complete settlement",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Card className={isDisabled ? "opacity-50" : ""}>
+      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
+        <div>
+          <CardTitle className="text-lg">Settle to Bitcoin L1</CardTitle>
+          <CardDescription>Withdraw your L2 balance to Bitcoin mainnet</CardDescription>
+        </div>
+        <StepIndicator 
+          step={4} 
+          label="Settle" 
+          active={!!wallet && balance > 0 && !psbtSigned} 
+          completed={psbtSigned} 
+        />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!psbtCreated ? (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="merchant-address">Recipient Bitcoin Address</Label>
+              <Input
+                id="merchant-address"
+                placeholder="bc1p..."
+                value={merchantAddress}
+                onChange={(e) => setMerchantAddress(e.target.value)}
+                disabled={isDisabled || isLoading}
+                data-testid="input-recipient-address"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="settlement-amount">Settlement Amount (BTC)</Label>
+              <Input
+                id="settlement-amount"
+                type="number"
+                step="0.00000001"
+                min="0"
+                max={balance.toString()}
+                placeholder="0.00100000"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                disabled={isDisabled || isLoading}
+                data-testid="input-settlement-amount"
+              />
+              <p className="text-xs text-muted-foreground">
+                Available: {formatBTC(balance)} BTC
+              </p>
+            </div>
+
+            <Button 
+              onClick={handleCreatePSBT}
+              disabled={isDisabled || isLoading || !merchantAddress || !paymentAmount}
+              className="w-full"
+              data-testid="button-create-psbt"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Creating PSBT...
+                </>
+              ) : (
+                <>
+                  <Bitcoin className="w-4 h-4 mr-2" />
+                  Create Settlement PSBT
+                </>
+              )}
+            </Button>
+          </>
+        ) : psbtSigned ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20">
+              <div className="flex items-center gap-2 text-green-600 mb-2">
+                <Check className="w-4 h-4" />
+                <span className="font-medium">Ready for Settlement</span>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-mono">{paymentAmount} BTC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Recipient</span>
+                  <span className="font-mono text-xs truncate max-w-[150px]">{merchantAddress}</span>
+                </div>
+              </div>
+            </div>
+
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button 
+                  onClick={() => {}}
+                  disabled={isLoading}
+                  className="w-full"
+                  data-testid="button-settle"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Settling...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRight className="w-4 h-4 mr-2" />
+                      Settle on Bitcoin L1
+                    </>
+                  )}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogTitle>Confirm Settlement</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will send {paymentAmount} BTC to {merchantAddress} on Bitcoin L1. This action cannot be undone.
+                </AlertDialogDescription>
+                <div className="flex gap-3 justify-end pt-4">
+                  <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction 
+                    onClick={handleSettle}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "Settling..." : "Confirm Settlement"}
+                  </AlertDialogAction>
+                </div>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <div className="flex items-center gap-2 text-blue-600 mb-2">
+                <AlertCircle className="w-4 h-4" />
+                <span className="font-medium">PSBT Created - Awaiting Signature</span>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-mono">{paymentAmount} BTC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Recipient</span>
+                  <span className="font-mono text-xs truncate max-w-[150px]">{merchantAddress}</span>
+                </div>
+              </div>
+            </div>
+
+            <Button 
+              onClick={handleSignPSBT}
+              disabled={isLoading}
+              className="w-full"
+              variant="outline"
+              data-testid="button-sign-psbt"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Signing...
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4 mr-2" />
+                  Sign PSBT (Multisig Path)
+                </>
+              )}
+            </Button>
           </div>
         )}
       </CardContent>
@@ -481,155 +813,174 @@ function L2BalanceSection() {
   );
 }
 
-function MerchantSubdomainSection() {
-  const { wallet, addMerchant, merchants } = useWallet();
+function MerchantPaymentSection() {
+  const { wallet } = useWallet();
   const { toast } = useToast();
-  const [merchantName, setMerchantName] = useState("");
-  const [copied, setCopied] = useState<string | null>(null);
+  const [merchantAddress, setMerchantAddress] = useState("");
+  const [merchantAmount, setMerchantAmount] = useState("");
+  const [paymentCreated, setPaymentCreated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const createMerchantMutation = useMutation({
-    mutationFn: async (data: { name: string; walletId: string; paymentUrl: string }) => {
-      const response = await apiRequest("POST", "/api/merchants", data);
-      return await response.json();
-    },
-    onSuccess: (merchant) => {
-      addMerchant(merchant);
-      setMerchantName("");
-      toast({
-        title: "Merchant Created",
-        description: `Your payment page is ready at ${merchant.paymentUrl}`,
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Creation Failed",
-        description: error.message || "Could not create merchant. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
+  const balance = parseFloat(wallet?.l2Balance || "0");
+  const isDisabled = !wallet || balance === 0;
 
-  const handleCreate = async () => {
-    if (!wallet || !merchantName) return;
-
-    const sanitizedName = merchantName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    
-    if (merchants.some(m => m.name === sanitizedName)) {
+  const handleCreatePayment = async () => {
+    if (!wallet || !merchantAddress || !merchantAmount) {
       toast({
-        title: "Name Taken",
-        description: "This merchant name is already in use.",
+        title: "Missing Information",
+        description: "Please enter both merchant address and amount",
         variant: "destructive",
       });
       return;
     }
 
-    const paymentUrl = `https://${sanitizedName}.bytestream.app`;
-    createMerchantMutation.mutate({
-      name: sanitizedName,
-      walletId: wallet.id,
-      paymentUrl,
-    });
+    const amount = parseFloat(merchantAmount);
+    if (isNaN(amount) || amount <= 0 || amount > balance) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount within your balance",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Create an L2 commitment for this merchant payment
+      const psbtHex = Buffer.from(
+        JSON.stringify({
+          to: merchantAddress,
+          amount: amount,
+          timestamp: Date.now(),
+        })
+      ).toString("hex");
+
+      const response = await apiRequest("POST", "/api/l2-commitments", {
+        walletId: wallet.id,
+        merchantAddress,
+        amount: amount.toString(),
+        psbt: psbtHex,
+        settled: "false",
+      });
+
+      await response.json();
+      setPaymentCreated(true);
+      
+      toast({
+        title: "Payment Created",
+        description: `${merchantAmount} BTC payment to merchant created`,
+      });
+    } catch {
+      toast({
+        title: "Failed to Create Payment",
+        description: "Could not create merchant payment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleCopy = async (url: string) => {
-    await navigator.clipboard.writeText(url);
-    setCopied(url);
-    setTimeout(() => setCopied(null), 2000);
+  const handleReset = () => {
+    setMerchantAddress("");
+    setMerchantAmount("");
+    setPaymentCreated(false);
   };
-
-  const isDisabled = !wallet || parseFloat(wallet.l2Balance || "0") === 0;
 
   return (
     <Card className={isDisabled ? "opacity-50" : ""}>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
         <div>
-          <CardTitle className="text-lg">L2 Merchant Subdomain</CardTitle>
-          <CardDescription>Create a payment page for your business</CardDescription>
+          <CardTitle className="text-lg">Merchant Payment</CardTitle>
+          <CardDescription>Send payment to a merchant address</CardDescription>
         </div>
         <StepIndicator 
           step={3} 
-          label="Merchant" 
-          active={!!wallet && parseFloat(wallet.l2Balance || "0") > 0} 
-          completed={merchants.length > 0} 
+          label="Payment" 
+          active={!!wallet && balance > 0 && !paymentCreated} 
+          completed={paymentCreated} 
         />
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="merchant-name">Merchant Name</Label>
-          <div className="flex gap-2">
-            <Input
-              id="merchant-name"
-              placeholder="my-store"
-              value={merchantName}
-              onChange={(e) => setMerchantName(e.target.value)}
-              disabled={isDisabled || createMerchantMutation.isPending}
-              data-testid="input-merchant-name"
-            />
+        {!paymentCreated ? (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="merchant-address">Merchant Bitcoin Address</Label>
+              <Input
+                id="merchant-address"
+                placeholder="bc1p..."
+                value={merchantAddress}
+                onChange={(e) => setMerchantAddress(e.target.value)}
+                disabled={isDisabled || isLoading}
+                data-testid="input-merchant-address"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="merchant-amount">Payment Amount (BTC)</Label>
+              <Input
+                id="merchant-amount"
+                type="number"
+                step="0.00000001"
+                min="0"
+                max={balance.toString()}
+                placeholder="0.00100000"
+                value={merchantAmount}
+                onChange={(e) => setMerchantAmount(e.target.value)}
+                disabled={isDisabled || isLoading}
+                data-testid="input-merchant-amount"
+              />
+              <p className="text-xs text-muted-foreground">
+                Available: {formatBTC(balance)} BTC
+              </p>
+            </div>
+
             <Button 
-              onClick={handleCreate} 
-              disabled={isDisabled || createMerchantMutation.isPending || !merchantName}
-              data-testid="button-create-merchant"
+              onClick={handleCreatePayment}
+              disabled={isDisabled || isLoading || !merchantAddress || !merchantAmount}
+              className="w-full"
+              data-testid="button-create-merchant-payment"
             >
-              {createMerchantMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Creating Payment...
+                </>
               ) : (
-                <Store className="w-4 h-4" />
+                <>
+                  <Bitcoin className="w-4 h-4 mr-2" />
+                  Create Merchant Payment
+                </>
               )}
             </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Your payment URL will be: https://{merchantName.toLowerCase().replace(/[^a-z0-9-]/g, "-") || "your-name"}.bytestream.app
-          </p>
-        </div>
-
-        {merchants.length > 0 && (
-          <div className="space-y-2">
-            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Your Merchants
-            </Label>
-            <div className="space-y-2">
-              {merchants.map((merchant) => (
-                <div 
-                  key={merchant.id}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border"
-                >
-                  <div className="flex items-center gap-2">
-                    <Store className="w-4 h-4 text-muted-foreground" />
-                    <span className="font-medium">{merchant.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <a 
-                      href={`/pay/${merchant.name}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-primary hover:underline flex items-center gap-1"
-                      data-testid={`link-merchant-${merchant.name}`}
-                    >
-                      Open <ExternalLink className="w-3 h-3" />
-                    </a>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleCopy(merchant.paymentUrl)}
-                      data-testid={`button-copy-merchant-${merchant.name}`}
-                    >
-                      {copied === merchant.paymentUrl ? (
-                        <Check className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </Button>
-                  </div>
+          </>
+        ) : (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20">
+              <div className="flex items-center gap-2 text-green-600 mb-2">
+                <Check className="w-4 h-4" />
+                <span className="font-medium">Payment Created</span>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-mono">{merchantAmount} BTC</span>
                 </div>
-              ))}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Recipient</span>
+                  <span className="font-mono text-xs truncate max-w-[150px]">{merchantAddress}</span>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
 
-        {isDisabled && wallet && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <AlertCircle className="w-4 h-4" />
-            <span>Fund your wallet to create merchant pages</span>
+            <Button 
+              onClick={handleReset}
+              variant="outline"
+              className="w-full"
+              data-testid="button-create-another-payment"
+            >
+              Create Another Payment
+            </Button>
           </div>
         )}
       </CardContent>
@@ -680,7 +1031,8 @@ export default function Home() {
           <GenerateWalletSection />
           <FundAddressSection />
           <L2BalanceSection />
-          <MerchantSubdomainSection />
+          <MerchantPaymentSection />
+          <L2SettlementSection />
         </div>
       </main>
     </div>

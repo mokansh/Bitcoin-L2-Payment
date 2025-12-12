@@ -25,6 +25,7 @@ export const transactions = pgTable("transactions", {
   amount: numeric("amount").notNull(),
   status: text("status").notNull().default("pending"),
   confirmations: integer("confirmations").default(0),
+  createdAt: timestamp("created_at").default(sql`now()`),
 });
 
 export const l2Commitments = pgTable("l2_commitments", {
@@ -65,6 +66,7 @@ export const insertTransactionSchema = createInsertSchema(transactions).pick({
   amount: true,
   status: true,
   confirmations: true,
+  createdAt: true,
 });
 
 export const insertMerchantSchema = createInsertSchema(merchants).pick({
@@ -81,6 +83,9 @@ export const insertL2CommitmentSchema = createInsertSchema(l2Commitments).pick({
   userSignedPsbt: true,
   settled: true,
   settlementTxid: true,
+}).extend({
+  userSignedPsbt: z.string().optional().nullable(),
+  settlementTxid: z.string().optional().nullable(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

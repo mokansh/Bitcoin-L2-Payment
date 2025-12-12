@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatBTC } from "@/lib/bitcoin";
+import { useWallet } from "@/lib/wallet-context";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   Store, 
@@ -30,6 +31,7 @@ interface MerchantData {
 
 export default function MerchantPayment() {
   const { merchantName } = useParams<{ merchantName: string }>();
+  const { wallet } = useWallet();
   const { toast } = useToast();
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentComplete, setPaymentComplete] = useState(false);
@@ -48,7 +50,10 @@ export default function MerchantPayment() {
 
   const paymentMutation = useMutation({
     mutationFn: async (amount: string) => {
-      const response = await apiRequest("POST", `/api/merchants/${merchantName}/pay`, { amount });
+      const response = await apiRequest("POST", `/api/merchants/${merchantName}/pay`, {
+        amount,
+        payerWalletId: wallet?.id,
+      });
       return response;
     },
     onSuccess: (data) => {
@@ -75,7 +80,7 @@ export default function MerchantPayment() {
   });
 
   const handlePayment = async () => {
-    if (!merchant || !paymentAmount) return;
+    if (!merchant || !wallet || !paymentAmount) return;
 
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -87,7 +92,7 @@ export default function MerchantPayment() {
       return;
     }
 
-    const balance = parseFloat(merchant.l2Balance);
+    const balance = parseFloat(wallet.l2Balance || "0");
     if (amount > balance) {
       toast({
         title: "Insufficient Balance",

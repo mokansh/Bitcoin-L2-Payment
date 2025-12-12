@@ -8,6 +8,7 @@ declare global {
       getAccounts: () => Promise<string[]>;
       getPublicKey: () => Promise<string>;
       sendBitcoin: (to: string, amount: number) => Promise<string>;
+      signPsbt: (psbtData: string) => Promise<string>;
     };
   }
 }

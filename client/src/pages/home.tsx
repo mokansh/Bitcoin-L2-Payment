@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWallet } from "@/lib/wallet-context";
-import { generateTaprootAddress, sendBitcoinTransaction, getBitcoinTxStatus, formatAddress, formatBTC } from "@/lib/bitcoin";
+import { generateTaprootAddress, sendBitcoinTransaction, getBitcoinTxStatus, formatAddress, formatBTC, signPsbtWithWallet } from "@/lib/bitcoin";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,12 +11,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import type { Wallet, Merchant, Transaction } from "@shared/schema";
-import { 
-  Wallet as WalletIcon, 
-  Bitcoin, 
-  Loader2, 
-  Copy, 
-  Check, 
+import {
+  Wallet as WalletIcon,
+  Bitcoin,
+  Loader2,
+  Copy,
+  Check,
   AlertCircle,
   Store,
   ArrowRight,
@@ -31,6 +32,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+
+// Encode string data to hex without Buffer (works in browser)
+const toHex = (value: string) =>
+  Array.from(new TextEncoder().encode(value))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 
 function Header() {
   const { bitcoinAddress, isConnecting, connectWallet, disconnectWallet } = useWallet();
@@ -69,9 +76,9 @@ function Header() {
                 <Copy className="w-4 h-4 text-muted-foreground" />
               )}
             </button>
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               onClick={disconnectWallet}
               data-testid="button-disconnect"
             >
@@ -79,8 +86,8 @@ function Header() {
             </Button>
           </div>
         ) : (
-          <Button 
-            onClick={connectWallet} 
+          <Button
+            onClick={connectWallet}
             disabled={isConnecting}
             data-testid="button-connect-wallet"
           >
@@ -105,14 +112,13 @@ function Header() {
 function StepIndicator({ step, label, active, completed }: { step: number; label: string; active: boolean; completed: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <div 
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-          completed 
-            ? "bg-primary text-primary-foreground" 
-            : active 
-              ? "bg-primary/20 text-primary border-2 border-primary" 
-              : "bg-muted text-muted-foreground"
-        }`}
+      <div
+        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${completed
+          ? "bg-primary text-primary-foreground"
+          : active
+            ? "bg-primary/20 text-primary border-2 border-primary"
+            : "bg-muted text-muted-foreground"
+          }`}
       >
         {completed ? <Check className="w-4 h-4" /> : step}
       </div>
@@ -127,6 +133,31 @@ function GenerateWalletSection() {
   const { bitcoinAddress, publicKey, wallet, setWallet } = useWallet();
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+
+  // Check if wallet exists when user connects
+  useEffect(() => {
+    async function checkExistingWallet() {
+      if (bitcoinAddress && !wallet && publicKey) {
+        setIsChecking(true);
+        try {
+          const response = await fetch(`/api/wallets/address/${bitcoinAddress}`);
+          if (response.ok) {
+            const existingWallet = await response.json();
+            if (existingWallet.taprootAddress) {
+              setWallet(existingWallet);
+              // Don't show toast for existing wallet on load
+            }
+          }
+        } catch (error) {
+          // Wallet doesn't exist yet, user needs to generate
+        } finally {
+          setIsChecking(false);
+        }
+      }
+    }
+    checkExistingWallet();
+  }, [bitcoinAddress, publicKey, wallet, setWallet]);
 
   const createWalletMutation = useMutation({
     mutationFn: async () => {
@@ -145,8 +176,8 @@ function GenerateWalletSection() {
     onSuccess: (data) => {
       setWallet(data);
       toast({
-        title: "ByteStream Wallet Generated",
-        description: "Your Taproot address is ready for funding.",
+        title: "Wallet generated successfully",
+        description: "Your ByteStream wallet is ready for use.",
       });
     },
     onError: () => {
@@ -177,31 +208,38 @@ function GenerateWalletSection() {
     <Card className={isDisabled ? "opacity-50" : ""}>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
         <div>
-          <CardTitle className="text-lg">Generate ByteStream Wallet</CardTitle>
-          <CardDescription>Create a Taproot address for L2 deposits</CardDescription>
+          <CardTitle className="text-lg">{wallet ? "ByteStream Wallet" : "Generate ByteStream Wallet"}</CardTitle>
+          <CardDescription>{wallet ? "Your Taproot address for L2 deposits" : "Create a Taproot address for L2 deposits"}</CardDescription>
         </div>
         <StepIndicator step={1} label="Generate" active={!!bitcoinAddress && !wallet} completed={!!wallet} />
       </CardHeader>
       <CardContent className="space-y-4">
         {!wallet ? (
-          <Button 
-            onClick={handleGenerate} 
-            disabled={isDisabled || createWalletMutation.isPending}
-            className="w-full"
-            data-testid="button-generate-wallet"
-          >
-            {createWalletMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Generating Taproot Address...
-              </>
-            ) : (
-              <>
-                <Bitcoin className="w-4 h-4 mr-2" />
-                Generate ByteStream Wallet
-              </>
-            )}
-          </Button>
+          isChecking ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              <span className="ml-2 text-sm text-muted-foreground">Checking for existing wallet...</span>
+            </div>
+          ) : (
+            <Button
+              onClick={handleGenerate}
+              disabled={isDisabled || createWalletMutation.isPending}
+              className="w-full"
+              data-testid="button-generate-wallet"
+            >
+              {createWalletMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating Taproot Address...
+                </>
+              ) : (
+                <>
+                  <Bitcoin className="w-4 h-4 mr-2" />
+                  Generate ByteStream Wallet
+                </>
+              )}
+            </Button>
+          )
         ) : (
           <div className="space-y-4">
             <div className="p-4 rounded-lg bg-muted/50 border">
@@ -210,19 +248,15 @@ function GenerateWalletSection() {
               </Label>
               <div className="mt-2 flex items-center gap-2">
                 <code className="flex-1 font-mono text-sm break-all">{wallet.taprootAddress}</code>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={handleCopy}
                   data-testid="button-copy-taproot"
                 >
                   {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Check className="w-4 h-4 text-green-500" />
-              <span>Wallet generated successfully</span>
             </div>
           </div>
         )}
@@ -234,31 +268,16 @@ function GenerateWalletSection() {
 function L2SettlementSection() {
   const { wallet, setWallet } = useWallet();
   const { toast } = useToast();
-  const [merchantAddress, setMerchantAddress] = useState("");
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [psbtCreated, setPsbtCreated] = useState(false);
-  const [psbtSigned, setPsbtSigned] = useState(false);
-  const [currentCommitment, setCurrentCommitment] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const balance = parseFloat(wallet?.l2Balance || "0");
   const isDisabled = !wallet || balance === 0;
 
-  const handleCreatePSBT = async () => {
-    if (!wallet || !merchantAddress || !paymentAmount) {
+  const handleSettleToL1 = async () => {
+    if (!wallet) {
       toast({
-        title: "Missing Information",
-        description: "Please enter both merchant address and payment amount",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const amount = parseFloat(paymentAmount);
-    if (isNaN(amount) || amount <= 0 || amount > balance) {
-      toast({
-        title: "Invalid Amount",
-        description: "Please enter a valid payment amount within your balance",
+        title: "No Wallet",
+        description: "Please connect your wallet first",
         variant: "destructive",
       });
       return;
@@ -266,118 +285,26 @@ function L2SettlementSection() {
 
     setIsLoading(true);
     try {
-      // In production, this would create an actual PSBT
-      // For now, we'll create a commitment record
-      const psbtHex = Buffer.from(
-        JSON.stringify({
-          to: merchantAddress,
-          amount: amount,
-          timestamp: Date.now(),
-        })
-      ).toString("hex");
-
-      const response = await apiRequest("POST", "/api/l2-commitments", {
+      // Call settlement endpoint to settle both user and merchant balances on L1
+      const response = await apiRequest("POST", "/api/settle-to-l1", {
         walletId: wallet.id,
-        merchantAddress,
-        amount: amount.toString(),
-        psbt: psbtHex,
-        settled: "false",
       });
 
-      const commitment = await response.json();
-      setCurrentCommitment(commitment);
-      setPsbtCreated(true);
-      
-      toast({
-        title: "PSBT Created",
-        description: "Ready for your signature",
-      });
-    } catch {
-      toast({
-        title: "Failed to Create PSBT",
-        description: "Could not create payment commitment",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSignPSBT = async () => {
-    if (!currentCommitment) return;
-
-    setIsLoading(true);
-    try {
-      // Simulate PSBT signing
-      const signedPsbt = Buffer.from(
-        currentCommitment.psbt + "signed"
-      ).toString("hex");
-
-      const response = await apiRequest(
-        "PATCH",
-        `/api/l2-commitments/${currentCommitment.id}/sign`,
-        { userSignedPsbt: signedPsbt }
-      );
-
-      const updated = await response.json();
-      setCurrentCommitment(updated);
-      setPsbtSigned(true);
+      const result = await response.json();
 
       toast({
-        title: "PSBT Signed",
-        description: "Your signature has been recorded. Ready to settle!",
-      });
-    } catch {
-      toast({
-        title: "Failed to Sign PSBT",
-        description: "Could not sign the transaction",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSettle = async () => {
-    if (!currentCommitment) return;
-
-    setIsLoading(true);
-    try {
-      const response = await apiRequest(
-        "POST",
-        `/api/l2-commitments/${currentCommitment.id}/settle`,
-        {}
-      );
-
-      const settled = await response.json();
-      
-      // Update wallet L2 balance
-      if (wallet) {
-        const newBalance = (balance - parseFloat(paymentAmount)).toFixed(8);
-        const walletResponse = await apiRequest(
-          "PATCH",
-          `/api/wallets/${wallet.id}/balance`,
-          { l2Balance: newBalance }
-        );
-        const updatedWallet = await walletResponse.json();
-        setWallet(updatedWallet);
-      }
-
-      toast({
-        title: "Settlement Complete",
-        description: `Settled ${paymentAmount} BTC on Bitcoin L1`,
+        title: "Settlement Initiated",
+        description: "User and merchant balances are being settled on Bitcoin L1",
       });
 
-      // Reset form
-      setMerchantAddress("");
-      setPaymentAmount("");
-      setPsbtCreated(false);
-      setPsbtSigned(false);
-      setCurrentCommitment(null);
-    } catch {
+      // Refresh wallet balance
+      const walletResponse = await fetch(`/api/wallets/${wallet.id}`);
+      const updatedWallet = await walletResponse.json();
+      setWallet(updatedWallet);
+    } catch (error) {
       toast({
         title: "Settlement Failed",
-        description: "Could not complete settlement",
+        description: "Could not complete settlement to L1",
         variant: "destructive",
       });
     } finally {
@@ -390,165 +317,61 @@ function L2SettlementSection() {
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
         <div>
           <CardTitle className="text-lg">Settle to Bitcoin L1</CardTitle>
-          <CardDescription>Withdraw your L2 balance to Bitcoin mainnet</CardDescription>
+          <CardDescription>Settle user and merchant balances to Bitcoin mainnet</CardDescription>
         </div>
-        <StepIndicator 
-          step={4} 
-          label="Settle" 
-          active={!!wallet && balance > 0 && !psbtSigned} 
-          completed={psbtSigned} 
+        <StepIndicator
+          step={4}
+          label="Settle"
+          active={!!wallet && balance > 0}
+          completed={false}
         />
       </CardHeader>
       <CardContent className="space-y-4">
-        {!psbtCreated ? (
-          <>
-            <div className="space-y-2">
-              <Label htmlFor="merchant-address">Recipient Bitcoin Address</Label>
-              <Input
-                id="merchant-address"
-                placeholder="bc1p..."
-                value={merchantAddress}
-                onChange={(e) => setMerchantAddress(e.target.value)}
-                disabled={isDisabled || isLoading}
-                data-testid="input-recipient-address"
-              />
+        <div className="p-4 rounded-lg bg-muted/50 border">
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Available L2 Balance</span>
+              <span className="font-mono font-medium">{formatBTC(balance)} BTC</span>
             </div>
+          </div>
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="settlement-amount">Settlement Amount (BTC)</Label>
-              <Input
-                id="settlement-amount"
-                type="number"
-                step="0.00000001"
-                min="0"
-                max={balance.toString()}
-                placeholder="0.00100000"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(e.target.value)}
-                disabled={isDisabled || isLoading}
-                data-testid="input-settlement-amount"
-              />
-              <p className="text-xs text-muted-foreground">
-                Available: {formatBTC(balance)} BTC
-              </p>
-            </div>
-
-            <Button 
-              onClick={handleCreatePSBT}
-              disabled={isDisabled || isLoading || !merchantAddress || !paymentAmount}
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              disabled={isDisabled || isLoading}
               className="w-full"
-              data-testid="button-create-psbt"
+              data-testid="button-settle-to-l1"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Creating PSBT...
+                  Settling...
                 </>
               ) : (
                 <>
-                  <Bitcoin className="w-4 h-4 mr-2" />
-                  Create Settlement PSBT
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Settle to Bitcoin L1
                 </>
               )}
             </Button>
-          </>
-        ) : psbtSigned ? (
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20">
-              <div className="flex items-center gap-2 text-green-600 mb-2">
-                <Check className="w-4 h-4" />
-                <span className="font-medium">Ready for Settlement</span>
-              </div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Amount</span>
-                  <span className="font-mono">{paymentAmount} BTC</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Recipient</span>
-                  <span className="font-mono text-xs truncate max-w-[150px]">{merchantAddress}</span>
-                </div>
-              </div>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogTitle>Confirm Settlement</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will settle all user and merchant balances on Bitcoin L1. This action cannot be undone.
+            </AlertDialogDescription>
+            <div className="flex gap-3 justify-end pt-4">
+              <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleSettleToL1}
+                disabled={isLoading}
+              >
+                {isLoading ? "Settling..." : "Confirm Settlement"}
+              </AlertDialogAction>
             </div>
-
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button 
-                  onClick={() => {}}
-                  disabled={isLoading}
-                  className="w-full"
-                  data-testid="button-settle"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Settling...
-                    </>
-                  ) : (
-                    <>
-                      <ArrowRight className="w-4 h-4 mr-2" />
-                      Settle on Bitcoin L1
-                    </>
-                  )}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogTitle>Confirm Settlement</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will send {paymentAmount} BTC to {merchantAddress} on Bitcoin L1. This action cannot be undone.
-                </AlertDialogDescription>
-                <div className="flex gap-3 justify-end pt-4">
-                  <AlertDialogCancel disabled={isLoading}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction 
-                    onClick={handleSettle}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? "Settling..." : "Confirm Settlement"}
-                  </AlertDialogAction>
-                </div>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <div className="flex items-center gap-2 text-blue-600 mb-2">
-                <AlertCircle className="w-4 h-4" />
-                <span className="font-medium">PSBT Created - Awaiting Signature</span>
-              </div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Amount</span>
-                  <span className="font-mono">{paymentAmount} BTC</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Recipient</span>
-                  <span className="font-mono text-xs truncate max-w-[150px]">{merchantAddress}</span>
-                </div>
-              </div>
-            </div>
-
-            <Button 
-              onClick={handleSignPSBT}
-              disabled={isLoading}
-              className="w-full"
-              variant="outline"
-              data-testid="button-sign-psbt"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Signing...
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4 mr-2" />
-                  Sign PSBT (Multisig Path)
-                </>
-              )}
-            </Button>
-          </div>
-        )}
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   );
@@ -562,6 +385,27 @@ function FundAddressSection() {
   const [pendingTx, setPendingTx] = useState<{ txid: string; amount: string; id: string } | null>(null);
   const [confirmations, setConfirmations] = useState(0);
   const [isConfirmed, setIsConfirmed] = useState(false);
+  const [showFundModal, setShowFundModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const { data: depositHistory, isLoading: isLoadingHistory } = useQuery({
+    queryKey: ["/api/wallets", wallet?.id, "transactions"],
+    queryFn: async () => {
+      if (!wallet?.id) return [];
+      const res = await fetch(`/api/wallets/${wallet.id}/transactions`);
+      if (!res.ok) throw new Error("Failed to fetch transactions");
+      return res.json();
+    },
+    enabled: !!wallet?.id,
+    refetchInterval: 5 * 60 * 1000, // Auto-refresh every 5 minutes
+  });
+
+  const handleCopyTx = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const createTransactionMutation = useMutation({
     mutationFn: async (data: { walletId: string; txid: string; amount: string }) => {
@@ -576,21 +420,21 @@ function FundAddressSection() {
         const response = await fetch(`/api/transactions/${txId}/status`);
         const status = await response.json();
         setConfirmations(status.confirmations || 0);
-        
+
         if (status.status === "confirmed") {
           setIsConfirmed(true);
-          updateTransaction(status.txid, { 
-            status: "confirmed", 
-            confirmations: status.confirmations 
+          updateTransaction(status.txid, {
+            status: "confirmed",
+            confirmations: status.confirmations
           });
-          
+
           // Fetch updated wallet
           if (wallet) {
             const walletResponse = await fetch(`/api/wallets/${wallet.id}`);
             const updatedWallet = await walletResponse.json();
             setWallet(updatedWallet);
           }
-          
+
           toast({
             title: "Transaction Confirmed",
             description: `Your L2 balance has been credited with ${depositAmount} BTC.`,
@@ -635,19 +479,20 @@ function FundAddressSection() {
         wallet.taprootAddress,
         amountNum
       );
-      
+
       // Create transaction in backend
       const tx = await createTransactionMutation.mutateAsync({
         walletId: wallet.id,
         txid,
         amount,
       });
-      
+
       addTransaction(tx);
       setPendingTx({ txid, amount, id: tx.id });
       setConfirmations(0);
       setIsConfirmed(false);
-      
+      setShowFundModal(false);
+
       toast({
         title: "Transaction Sent",
         description: "Waiting for blockchain confirmation...",
@@ -655,7 +500,7 @@ function FundAddressSection() {
 
       // Start polling for confirmation
       pollForConfirmation(tx.id, amount);
-      
+
     } catch {
       toast({
         title: "Transaction Failed",
@@ -671,62 +516,40 @@ function FundAddressSection() {
   const isDisabled = !wallet;
 
   return (
-    <Card className={isDisabled ? "opacity-50" : ""}>
-      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
-        <div>
-          <CardTitle className="text-lg">Fund Taproot Address</CardTitle>
-          <CardDescription>Deposit BTC to your L2 wallet</CardDescription>
-        </div>
-        <StepIndicator 
-          step={2} 
-          label="Fund" 
-          active={!!wallet && !isConfirmed} 
-          completed={isConfirmed} 
-        />
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {wallet && (
-          <div className="p-4 rounded-lg bg-muted/50 border">
-            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Deposit Address
-            </Label>
-            <code className="mt-2 block font-mono text-sm break-all">{wallet.taprootAddress}</code>
+    <>
+      <Card className={isDisabled ? "opacity-50" : ""}>
+        <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
+          <div>
+            <CardTitle className="text-lg">Fund ByteStream Wallet</CardTitle>
+            <CardDescription>Deposit BTC to your L2 wallet</CardDescription>
           </div>
-        )}
-
-        <div className="space-y-2">
-          <Label htmlFor="amount">Amount (BTC)</Label>
-          <Input
-            id="amount"
-            type="number"
-            step="0.00000001"
-            min="0"
-            placeholder="0.00100000"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            disabled={isDisabled || isFunding}
-            data-testid="input-btc-amount"
+          <StepIndicator
+            step={2}
+            label="Fund"
+            active={!!wallet && !isConfirmed}
+            completed={isConfirmed}
           />
-        </div>
-
-        <Button 
-          onClick={handleFund} 
-          disabled={isDisabled || isFunding || !amount}
-          className="w-full"
-          data-testid="button-fund-wallet"
-        >
-          {isFunding ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Sending Transaction...
-            </>
-          ) : (
-            <>
-              <ArrowRight className="w-4 h-4 mr-2" />
-              Fund from Wallet
-            </>
-          )}
-        </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setShowFundModal(true)}
+              disabled={isDisabled}
+              className="flex-1"
+              data-testid="button-fund-wallet"
+            >
+              <Bitcoin className="w-4 h-4 mr-2" />
+              Fund ByteStream Wallet
+            </Button>
+            <Button
+              onClick={() => setShowHistoryModal(true)}
+              disabled={isDisabled}
+              variant="outline"
+              className="flex-1"
+            >
+              View Deposit History
+            </Button>
+          </div>
 
         {pendingTx && (
           <div className="p-4 rounded-lg border bg-card">
@@ -744,7 +567,7 @@ function FundAddressSection() {
                 </Badge>
               )}
             </div>
-            
+
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Amount</span>
@@ -756,7 +579,7 @@ function FundAddressSection() {
               </div>
               <div className="flex justify-between items-start gap-2">
                 <span className="text-muted-foreground">TxID</span>
-                <a 
+                <a
                   href={`https://mempool.space/testnet/tx/${pendingTx.txid}`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -778,6 +601,170 @@ function FundAddressSection() {
         )}
       </CardContent>
     </Card>
+
+      {/* Fund Modal */}
+      <AlertDialog open={showFundModal} onOpenChange={setShowFundModal}>
+        <AlertDialogContent>
+          <AlertDialogTitle>Fund ByteStream Wallet</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-4 pt-4">
+              <p className="text-sm text-muted-foreground">
+                Enter the amount of BTC you want to deposit to your ByteStream wallet.
+              </p>
+
+              {wallet && (
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Your ByteStream Address
+                  </Label>
+                  <div className="p-3 rounded-lg bg-muted/50 border">
+                    <code className="text-xs break-all">{wallet.taprootAddress}</code>
+                  </div>
+                </div>
+              )}
+              
+              <div className="space-y-2">
+                <Label htmlFor="fund-amount">Amount (BTC)</Label>
+                <Input
+                  id="fund-amount"
+                  type="number"
+                  step="0.00000001"
+                  min="0"
+                  placeholder="0.00100000"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  disabled={isFunding}
+                  data-testid="input-btc-amount"
+                  autoFocus
+                />
+              </div>
+            </div>
+          </AlertDialogDescription>
+          <div className="flex gap-3 justify-end pt-4">
+            <AlertDialogCancel disabled={isFunding}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleFund}
+              disabled={isFunding || !amount}
+            >
+              {isFunding ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Fund Wallet
+                </>
+              )}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Deposit History Modal */}
+      <AlertDialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
+        <AlertDialogContent className="max-w-2xl">
+          <AlertDialogTitle>Deposit Transaction History</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-4 pt-4">
+              {isLoadingHistory ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : !depositHistory || depositHistory.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No deposit transactions found
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                  {depositHistory.map((tx: any) => (
+                    <div key={tx.id} className="p-4 rounded-lg border bg-card">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            tx.status === "confirmed" 
+                              ? "bg-green-500/10 text-green-600" 
+                              : "bg-yellow-500/10 text-yellow-600"
+                          }`}>
+                            {tx.status === "confirmed" ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-medium">Deposit</div>
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(tx.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+                            </div>
+                          </div>
+                        </div>
+                        <Badge variant={tx.status === "confirmed" ? "default" : "secondary"}>
+                          {tx.status === "confirmed" ? "Confirmed" : "Pending"}
+                        </Badge>
+                      </div>
+                      
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Amount</span>
+                          <span className="font-mono font-bold">{formatBTC(tx.amount)} BTC</span>
+                        </div>
+                        
+                        {tx.status === "confirmed" && tx.confirmations && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Confirmations</span>
+                            <span>{tx.confirmations}</span>
+                          </div>
+                        )}
+                        
+                        <div className="space-y-1">
+                          <span className="text-muted-foreground">Transaction ID</span>
+                          <div className="flex items-center gap-2 p-2 rounded bg-muted/50">
+                            <code className="flex-1 text-xs break-all">{tx.txid}</code>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0"
+                              onClick={() => handleCopyTx(tx.txid)}
+                            >
+                              {copied ? (
+                                <Check className="w-3 h-3 text-green-500" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0"
+                              asChild
+                            >
+                              <a
+                                href={`https://mempool.space/testnet/tx/${tx.txid}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </AlertDialogDescription>
+          <div className="flex justify-end pt-4">
+            <AlertDialogAction onClick={() => setShowHistoryModal(false)}>
+              Close
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -814,7 +801,7 @@ function L2BalanceSection() {
 }
 
 function MerchantPaymentSection() {
-  const { wallet } = useWallet();
+  const { wallet, setWallet } = useWallet();
   const { toast } = useToast();
   const [merchantAddress, setMerchantAddress] = useState("");
   const [merchantAmount, setMerchantAmount] = useState("");
@@ -846,34 +833,63 @@ function MerchantPaymentSection() {
 
     setIsLoading(true);
     try {
-      // Create an L2 commitment for this merchant payment
-      const psbtHex = Buffer.from(
-        JSON.stringify({
-          to: merchantAddress,
-          amount: amount,
-          timestamp: Date.now(),
-        })
-      ).toString("hex");
+      console.log("Creating merchant payment commitment...");
+      // Request PSBT from backend using Taproot UTXOs
+      const psbtResp = await apiRequest("POST", "/api/psbt", {
+        walletId: wallet.id,
+        sendTo: merchantAddress,
+        amount: Math.floor(amount * 100_000_000), // sats
+        network: "testnet",
+      });
+      if (!psbtResp.ok) {
+        const err = await psbtResp.json().catch(() => ({ error: "Failed to create PSBT" }));
+        throw new Error(err.error || "Failed to create PSBT");
+      }
+      const { psbt: psbtData } = await psbtResp.json();
 
+      // Sign PSBT with user's wallet
+      toast({
+        title: "Signing Transaction",
+        description: "Please approve the transaction in your wallet...",
+      });
+      
+      const signedPsbt = await signPsbtWithWallet(psbtData);
+
+      // Send commitment with signed PSBT to backend
       const response = await apiRequest("POST", "/api/l2-commitments", {
         walletId: wallet.id,
         merchantAddress,
         amount: amount.toString(),
-        psbt: psbtHex,
+        psbt: psbtData,
+        userSignedPsbt: signedPsbt,
         settled: "false",
       });
 
-      await response.json();
-      setPaymentCreated(true);
+      const result = await response.json();
       
+      // Update wallet with new balance from the response
+      if (result.payerBalance !== undefined && wallet) {
+        setWallet({
+          ...wallet,
+          l2Balance: result.payerBalance
+        });
+      }
+      
+      setPaymentCreated(true);
+
+      // Invalidate queries to refresh the UI
+      queryClient.invalidateQueries({ queryKey: ["/api/wallets", wallet.id, "l2-commitments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallets", wallet.id] });
+
       toast({
         title: "Payment Created",
-        description: `${merchantAmount} BTC payment to merchant created`,
+        description: `${merchantAmount} BTC payment to merchant created and signed`,
       });
-    } catch {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Could not create merchant payment";
       toast({
         title: "Failed to Create Payment",
-        description: "Could not create merchant payment",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -894,11 +910,11 @@ function MerchantPaymentSection() {
           <CardTitle className="text-lg">Merchant Payment</CardTitle>
           <CardDescription>Send payment to a merchant address</CardDescription>
         </div>
-        <StepIndicator 
-          step={3} 
-          label="Payment" 
-          active={!!wallet && balance > 0 && !paymentCreated} 
-          completed={paymentCreated} 
+        <StepIndicator
+          step={3}
+          label="Payment"
+          active={!!wallet && balance > 0 && !paymentCreated}
+          completed={paymentCreated}
         />
       </CardHeader>
       <CardContent className="space-y-4">
@@ -935,7 +951,7 @@ function MerchantPaymentSection() {
               </p>
             </div>
 
-            <Button 
+            <Button
               onClick={handleCreatePayment}
               disabled={isDisabled || isLoading || !merchantAddress || !merchantAmount}
               className="w-full"
@@ -973,7 +989,7 @@ function MerchantPaymentSection() {
               </div>
             </div>
 
-            <Button 
+            <Button
               onClick={handleReset}
               variant="outline"
               className="w-full"
@@ -988,29 +1004,209 @@ function MerchantPaymentSection() {
   );
 }
 
-export default function Home() {
-  const { bitcoinAddress, error } = useWallet();
+function TransactionHistorySection() {
+  const { wallet } = useWallet();
+  const [selectedTx, setSelectedTx] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(4);
+
+  const { data: history, isLoading } = useQuery({
+    queryKey: ["/api/wallets", wallet?.id, "l2-commitments"],
+    queryFn: async () => {
+      if (!wallet?.id) return [];
+      const res = await fetch(`/api/wallets/${wallet.id}/l2-commitments`);
+      if (!res.ok) throw new Error("Failed to fetch history");
+      return res.json();
+    },
+    enabled: !!wallet?.id,
+  });
+
+  const handleCopy = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleViewMore = () => {
+    setVisibleCount(prev => prev + 5);
+  };
+
+  if (!wallet) return null;
+
+  const visibleHistory = history?.slice(0, visibleCount) || [];
+  const hasMore = history && history.length > visibleCount;
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">L2 Transaction History</CardTitle>
+          <CardDescription>Your recent L2 payments</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : !history || history.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No transactions found
+            </div>
+          ) : (
+            <div className="max-h-[400px] overflow-y-auto pr-2 space-y-4">
+              {visibleHistory.map((tx: any) => (
+                <div 
+                  key={tx.id} 
+                  className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/5 transition-colors cursor-pointer"
+                  onClick={() => setSelectedTx(tx)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${tx.settled === "true" ? "bg-green-500/10 text-green-600" : "bg-blue-500/10 text-blue-600"
+                      }`}>
+                      {tx.settled === "true" ? <Check className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <div className="font-medium">
+                        {tx.settled === "true" ? "Settled to L1" : "L2 Payment"}
+                      </div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {new Date(tx.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold">
+                      -{formatBTC(tx.amount)} BTC
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate max-w-[100px]">
+                      To: {formatAddress(tx.merchantAddress)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {hasMore && (
+                <Button 
+                  variant="outline" 
+                  className="w-full sticky bottom-0 bg-background"
+                  onClick={handleViewMore}
+                >
+                  View More
+                </Button>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Transaction Details Dialog */}
+      {selectedTx && (
+        <AlertDialog open={!!selectedTx} onOpenChange={() => setSelectedTx(null)}>
+          <AlertDialogContent className="max-w-2xl">
+            <AlertDialogTitle>Transaction Details</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-4">
+                {/* Status */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Status</span>
+                  <Badge variant={selectedTx.settled === "true" ? "default" : "secondary"}>
+                    {selectedTx.settled === "true" ? "Settled to L1" : "L2 Commitment"}
+                  </Badge>
+                </div>
+
+                {/* Amount */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Amount</span>
+                  <span className="font-mono font-bold">{formatBTC(selectedTx.amount)} BTC</span>
+                </div>
+
+                {/* Merchant Address */}
+                <div className="space-y-2">
+                  <span className="text-sm font-medium">Merchant Address</span>
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                    <code className="flex-1 text-xs break-all">{selectedTx.merchantAddress}</code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleCopy(selectedTx.merchantAddress)}
+                    >
+                      {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Created At */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Created</span>
+                  <span className="text-sm font-mono">{new Date(selectedTx.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}</span>
+                </div>
+
+                {/* Transaction ID */}
+                <div className="space-y-2">
+                  <span className="text-sm font-medium">Commitment ID</span>
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                    <code className="flex-1 text-xs break-all">{selectedTx.id}</code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleCopy(selectedTx.id)}
+                    >
+                      {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Settlement TX ID */}
+                {selectedTx.settlementTxid && (
+                  <div className="space-y-2">
+                    <span className="text-sm font-medium">Settlement Transaction</span>
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                      <code className="flex-1 text-xs break-all">{selectedTx.settlementTxid}</code>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleCopy(selectedTx.settlementTxid)}
+                      >
+                        {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        asChild
+                      >
+                        <a
+                          href={`https://mempool.space/testnet/tx/${selectedTx.settlementTxid}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+            <div className="flex justify-end pt-4">
+              <AlertDialogAction onClick={() => setSelectedTx(null)}>
+                Close
+              </AlertDialogAction>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </>
+  );
+}
+
+export default function Home() {
+  const { wallet, bitcoinAddress, error } = useWallet(); // Added bitcoinAddress and error from original
+
+  return (
+    <div className="min-h-screen bg-background pb-20">
       <Header />
-      
-      <main className="max-w-4xl mx-auto px-6 pt-24 pb-12">
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold mb-2">Bitcoin L2 Payments</h1>
-          <p className="text-muted-foreground">
-            Generate a Taproot wallet, fund it with BTC, and create instant merchant payment pages.
-          </p>
-        </div>
 
-        {error && (
-          <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        )}
-
-        {!bitcoinAddress && (
+      <main className="max-w-7xl mx-auto px-6 pt-24 space-y-8">
+        {!bitcoinAddress && ( // Kept connect wallet card from original
           <Card className="mb-8 border-primary/20 bg-primary/5">
             <CardContent className="py-8 text-center">
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
@@ -1027,14 +1223,38 @@ export default function Home() {
           </Card>
         )}
 
-        <div className="space-y-6">
+        <div className="grid gap-8 lg:grid-cols-2">
           <GenerateWalletSection />
-          <FundAddressSection />
-          <L2BalanceSection />
-          <MerchantPaymentSection />
-          <L2SettlementSection />
+          <div className="space-y-8">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-bold tracking-tight">Bitcoin L2 Wallet</h1>
+              <p className="text-muted-foreground">
+                Generate a Taproot address, fund it, and make instant L2 payments.
+              </p>
+            </div>
+            {error && (
+              <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive" />
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
+          <div className="space-y-8">
+            <FundAddressSection />
+            <L2BalanceSection />
+            <MerchantPaymentSection />
+            <L2SettlementSection />
+          </div>
+
+          <div className="space-y-8">
+            <TransactionHistorySection />
+          </div>
         </div>
       </main>
     </div>
   );
 }
+

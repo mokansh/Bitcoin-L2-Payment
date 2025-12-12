@@ -10,7 +10,7 @@ export function generateTaprootAddress(
   const hash = Array.from(combined).reduce((acc, char) => {
     return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
   }, 0);
-  
+
   const chars = "0123456789abcdefghjkmnpqrstuvwxyz";
   let address = "bc1p";
   for (let i = 0; i < 58; i++) {
@@ -50,16 +50,17 @@ export async function sendBitcoinTransaction(
       const satoshis = Math.floor(amountBTC * 100000000);
       const txid = await window.unisat.sendBitcoin(toAddress, satoshis);
       return txid;
-    } catch {
-      // Fall through to mock
+    } catch (error) {
+      console.error("Transaction failed:", error);
+      throw error;
     }
   }
-  
+
   // Generate mock txid
-  const txid = Array.from({ length: 64 }, () => 
+  const txid = Array.from({ length: 64 }, () =>
     "0123456789abcdef"[Math.floor(Math.random() * 16)]
   ).join("");
-  
+
   return txid;
 }
 
@@ -71,4 +72,21 @@ export function formatAddress(address: string, chars: number = 8): string {
 export function formatBTC(amount: string | number): string {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   return num.toFixed(8);
+}
+
+export async function signPsbtWithWallet(psbtData: string): Promise<string> {
+  // Sign PSBT data using UniSat wallet
+  if (window.unisat) {
+    try {
+      // UniSat provides signPsbt method for signing PSBT transactions
+      const signedPsbt = await (window.unisat as any).signPsbt(psbtData);
+      return signedPsbt;
+    } catch (error) {
+      console.error("Failed to sign PSBT:", error);
+      throw error;
+    }
+  }
+
+  // For demo purposes, generate a mock signed PSBT
+  return `${psbtData}_signed_${Date.now()}`;
 }

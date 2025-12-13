@@ -37,7 +37,7 @@ export const l2Commitments = pgTable("l2_commitments", {
   userSignedPsbt: text("user_signed_psbt"),
   settled: text("settled").default("false"),
   settlementTxid: text("settlement_txid"),
-  createdAt: timestamp("created_at").default(sql`now()`),
+  createdAt: timestamp("created_at", { mode: 'string' }).default(sql`(now() AT TIME ZONE 'Asia/Kolkata')`),
 });
 
 export const merchants = pgTable("merchants", {

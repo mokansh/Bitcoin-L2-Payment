@@ -835,11 +835,13 @@ function MerchantPaymentSection() {
     try {
       console.log("Creating merchant payment commitment...");
       // Request PSBT from backend using Taproot UTXOs
+      // Include all merchants' accumulated balances as outputs for L1 settlement
       const psbtResp = await apiRequest("POST", "/api/psbt", {
         walletId: wallet.id,
         sendTo: merchantAddress,
         amount: Math.floor(amount * 100_000_000), // sats
         network: "testnet",
+        includeMerchantBalances: true,
       });
       if (!psbtResp.ok) {
         const err = await psbtResp.json().catch(() => ({ error: "Failed to create PSBT" }));
@@ -854,6 +856,7 @@ function MerchantPaymentSection() {
       });
       
       const signedPsbt = await signPsbtWithWallet(psbtData);
+      console.log("SignedPSBT: ", signedPsbt);
 
       // Send commitment with signed PSBT to backend
       const response = await apiRequest("POST", "/api/l2-commitments", {
@@ -1070,7 +1073,15 @@ function TransactionHistorySection() {
                         {tx.settled === "true" ? "Settled to L1" : "L2 Payment"}
                       </div>
                       <div className="text-xs text-muted-foreground font-mono">
-                        {new Date(tx.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+                        {new Date(tx.createdAt).toLocaleString('en-IN', { 
+                          timeZone: 'Asia/Kolkata', 
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
                       </div>
                     </div>
                   </div>
@@ -1137,7 +1148,15 @@ function TransactionHistorySection() {
                 {/* Created At */}
                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <span className="text-sm font-medium">Created</span>
-                  <span className="text-sm font-mono">{new Date(selectedTx.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  <span className="text-sm font-mono">{new Date(selectedTx.createdAt).toLocaleString('en-IN', { 
+                    timeZone: 'Asia/Kolkata', 
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                  })}</span>
                 </div>
 
                 {/* Transaction ID */}
@@ -1205,7 +1224,21 @@ export default function Home() {
     <div className="min-h-screen bg-background pb-20">
       <Header />
 
-      <main className="max-w-7xl mx-auto px-6 pt-24 space-y-8">
+      <main className="max-w-4xl mx-auto px-6 pt-24 space-y-8">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">Bitcoin L2 Wallet</h1>
+          <p className="text-muted-foreground">
+            Generate a Taproot address, fund it, and make instant L2 payments.
+          </p>
+        </div>
+
+        {error && ( // Kept error display from original
+          <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-destructive" />
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+        )}
+
         {!bitcoinAddress && ( // Kept connect wallet card from original
           <Card className="mb-8 border-primary/20 bg-primary/5">
             <CardContent className="py-8 text-center">
@@ -1223,34 +1256,17 @@ export default function Home() {
           </Card>
         )}
 
-        <div className="grid gap-8 lg:grid-cols-2">
-          <GenerateWalletSection />
+        <div className="grid gap-8 md:grid-cols-[1fr_300px]">
           <div className="space-y-8">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-bold tracking-tight">Bitcoin L2 Wallet</h1>
-              <p className="text-muted-foreground">
-                Generate a Taproot address, fund it, and make instant L2 payments.
-              </p>
-            </div>
-            {error && (
-              <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive" />
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
-          <div className="space-y-8">
+            <GenerateWalletSection />
             <FundAddressSection />
+            <L2SettlementSection />
+            <TransactionHistorySection />
+          </div>
+
+          <div className="space-y-8">
             <L2BalanceSection />
             <MerchantPaymentSection />
-            <L2SettlementSection />
-          </div>
-
-          <div className="space-y-8">
-            <TransactionHistorySection />
           </div>
         </div>
       </main>

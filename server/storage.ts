@@ -34,13 +34,15 @@ export interface IStorage {
   getMerchant(id: string): Promise<Merchant | undefined>;
   getMerchantByName(name: string): Promise<Merchant | undefined>;
   getMerchantsByWalletId(walletId: string): Promise<Merchant[]>;
-  createMerchant(merchant: InsertMerchant): Promise<Merchant>;
+  getAllMerchants(): Promise<Merchant[]>;
+  createMerchant(insertMerchant: InsertMerchant): Promise<Merchant>;
   deleteMerchant(id: string): Promise<boolean>;
 
   // L2 Commitments
   getL2Commitment(id: string): Promise<L2Commitment | undefined>;
   getLatestL2CommitmentByWalletId(walletId: string): Promise<L2Commitment | undefined>;
   getL2CommitmentsByWalletId(walletId: string): Promise<L2Commitment[]>;
+  getAllL2Commitments(): Promise<L2Commitment[]>;
   createL2Commitment(commitment: InsertL2Commitment): Promise<L2Commitment>;
   updateL2Commitment(id: string, updates: Partial<L2Commitment>): Promise<L2Commitment | undefined>;
 }
@@ -131,6 +133,10 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(merchants).where(eq(merchants.walletId, walletId));
   }
 
+  async getAllMerchants(): Promise<Merchant[]> {
+    return await db.select().from(merchants);
+  }
+
   async createMerchant(insertMerchant: InsertMerchant): Promise<Merchant> {
     const [merchant] = await db.insert(merchants).values(insertMerchant).returning();
     return merchant;
@@ -163,6 +169,10 @@ export class DatabaseStorage implements IStorage {
       .from(l2Commitments)
       .where(eq(l2Commitments.walletId, walletId))
       .orderBy(desc(l2Commitments.createdAt));
+  }
+
+  async getAllL2Commitments(): Promise<L2Commitment[]> {
+    return await db.select().from(l2Commitments);
   }
 
   async createL2Commitment(insertCommitment: InsertL2Commitment): Promise<L2Commitment> {

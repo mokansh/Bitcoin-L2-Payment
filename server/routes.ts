@@ -10,6 +10,8 @@ import * as tinysecp256k1 from "tiny-secp256k1";
 import { Taptree } from "bitcoinjs-lib/src/types";
 import dotenv from "dotenv";
 
+const ecc = tinysecp256k1;
+
 // Initialize environment variables
 dotenv.config();
 
@@ -61,6 +63,7 @@ function generateTaprootAddress(userPublicKey: string, network = bitcoin.network
 
     const keyAX = toXOnly(keyABuffer);
     const keyBX = toXOnly(keyBBuffer);
+    console.log("KEYAX:", keyAX.toString("hex"));
 
     const multisigScript = bitcoin.script.compile([
       keyAX,
@@ -138,8 +141,9 @@ function buildTaprootContext(userPublicKey: string, network = bitcoin.networks.t
     if (pk.length === 32) return pk;
     throw new Error("Unsupported public key length: " + pk.length);
   };
-
+  console.log("Key A Buffer:", keyABuffer.toString("hex"));
   const keyAX = toXOnly(keyABuffer);
+  console.log("KEYAX:", keyAX.toString("hex"));
   const keyBX = toXOnly(keyBBuffer);
 
   const multisigScript = bitcoin.script.compile([
@@ -274,7 +278,7 @@ async function monitorAndStoreDeposits(walletId: string, taprootAddress: string)
     
     let newTransactions = 0;
     let totalAmount = 0;
-    
+
     // Process each transaction
     for (const tx of txs) {
       // Calculate amount received by this address in this transaction
@@ -314,7 +318,7 @@ async function monitorAndStoreDeposits(walletId: string, taprootAddress: string)
               status,
               confirmations: txStatus.confirmations,
             });
-            console.log(`Updated transaction ${tx.txid} status to ${status}`);
+            // console.log(`Updated transaction ${tx.txid} status to ${status}`);
           } catch (error) {
             console.error(`Failed to update transaction ${tx.txid}:`, error);
           }
@@ -336,7 +340,7 @@ async function monitorAndStoreDeposits(walletId: string, taprootAddress: string)
             totalAmount += amountReceived;
           }
           
-          console.log(`Stored deposit transaction ${tx.txid} for wallet ${walletId}: ${amountBTC} BTC (${status})`);
+          // console.log(`Stored deposit transaction ${tx.txid} for wallet ${walletId}: ${amountBTC} BTC (${status})`);
         } catch (error) {
           console.error(`Failed to store transaction ${tx.txid}:`, error);
         }
@@ -783,12 +787,13 @@ export async function registerRoutes(
   // === PSBT Creation (Taproot UTXOs) ===
   app.post("/api/psbt", async (req, res) => {
     try {
-      const { walletId, sendTo, amount, outputs, network: net } = req.body as {
+      const { walletId, sendTo, amount, outputs, network: net, includeMerchantBalances } = req.body as {
         walletId: string;
         sendTo?: string;
         amount?: number;
         outputs?: Array<{ address: string; amount: number }>;
         network?: "mainnet" | "testnet";
+        includeMerchantBalances?: boolean;
       };
 
       const hasOutputsArray = Array.isArray(outputs) && outputs.length > 0;
@@ -825,13 +830,44 @@ export async function registerRoutes(
       // Build output script for the Taproot address (witnessUtxo.script)
       const outputScript = tapCtx.outputScript;
 
-      // Simple fee estimate (placeholder): 1000 sats fixed
+      // Simple fee estimate (placeholder): 300 sats fixed
       const fee = BigInt(300);
       let accumulated = BigInt(0);
 
-      const desiredOutputs = hasOutputsArray
+      let desiredOutputs = hasOutputsArray
         ? outputs!.map((o) => ({ address: o.address, value: BigInt(o.amount) }))
         : [{ address: sendTo as string, value: BigInt(amount as number) }];
+
+      // If includeMerchantBalances is true, calculate accumulated balances
+      // for merchants associated with this wallet only (not all users).
+      if (includeMerchantBalances) {
+        // Get unsettled L2 commitments for this wallet only
+        const allCommitmentsForWallet = await storage.getL2CommitmentsByWalletId(walletId);
+        const unsettledCommitments = allCommitmentsForWallet.filter(c => c.settled === "false");
+
+        // Group commitments by merchant address and calculate totals
+        const merchantBalances = new Map<string, bigint>();
+
+        for (const commitment of unsettledCommitments) {
+          const merchantAddr = commitment.merchantAddress;
+          // commitment.amount is stored as BTC string, convert to satoshis
+          const amountInSats = Math.round(parseFloat(String(commitment.amount)) * 100000000);
+          const currentBalance = merchantBalances.get(merchantAddr) || BigInt(0);
+          merchantBalances.set(merchantAddr, currentBalance + BigInt(amountInSats));
+        }
+
+        // Add the current payment to the merchant's accumulated balance (amount is in satoshis)
+        if (sendTo && amount) {
+          const currentMerchantBalance = merchantBalances.get(sendTo) || BigInt(0);
+          merchantBalances.set(sendTo, currentMerchantBalance + BigInt(amount));
+        }
+
+        // Convert map to outputs array (only includes merchants this wallet owes)
+        desiredOutputs = Array.from(merchantBalances.entries()).map(([address, value]) => ({
+          address,
+          value,
+        }));
+      }
 
       const totalOutput = desiredOutputs.reduce((sum, o) => sum + o.value, BigInt(0));
 
@@ -857,7 +893,16 @@ export async function registerRoutes(
       }
 
       if (accumulated < totalOutput + fee) {
-        return res.status(400).json({ error: "Insufficient funds for amount + fee" });
+        return res.status(400).json({ 
+          error: "Insufficient funds for amount + fee",
+          details: {
+            accumulated: Number(accumulated),
+            totalOutput: Number(totalOutput),
+            fee: Number(fee),
+            required: Number(totalOutput + fee),
+            shortfall: Number(totalOutput + fee - accumulated)
+          }
+        });
       }
 
       // Add recipient output
@@ -865,11 +910,14 @@ export async function registerRoutes(
         psbt.addOutput({ address: out.address, value: out.value });
       }
 
-      // Change back to sender taproot address
+      // Change back to user's connected wallet address (from Unisat)
       const change = accumulated - totalOutput - fee;
       if (change > 0) {
-        psbt.addOutput({ address: addressToUse, value: change });
+        psbt.addOutput({ address: wallet.bitcoinAddress, value: change });
       }
+
+      console.log("PSBT Inputs:", psbt.inputCount);
+      console.log("PSBT2 : ", psbt)
 
       const psbtHex = psbt.toHex();
       return res.status(200).json({
@@ -966,6 +1014,557 @@ export async function registerRoutes(
       });
     } catch {
       res.status(500).json({ error: "Failed to settle commitment" });
+    }
+  });
+
+  // Settle all pending L2 commitments to Bitcoin L1
+  app.post("/api/settle-to-l1", async (req, res) => {
+    try {
+      const { walletId } = req.body;
+      if (!walletId) {
+        return res.status(400).json({ error: "Wallet ID is required" });
+      }
+
+      const wallet = await storage.getWallet(walletId);
+      if (!wallet) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+
+      // Get the latest L2 commitment with user-signed PSBT
+      const latestCommitment = await storage.getLatestL2CommitmentByWalletId(walletId);
+      if (!latestCommitment) {
+        return res.status(404).json({ error: "No L2 commitment found" });
+      }
+
+      if (!latestCommitment.userSignedPsbt) {
+        return res.status(400).json({ error: "Latest commitment is not signed by user" });
+      }
+
+      if (latestCommitment.settled === "true") {
+        return res.status(400).json({ error: "Latest commitment already settled" });
+      }
+
+      // Get ByteStream hub private key from environment
+      const bytestreamPrivateKey = process.env.BYTE_PRIVATE_KEY;
+      if (!bytestreamPrivateKey) {
+        return res.status(500).json({ error: "ByteStream private key not configured" });
+      }
+
+      // Get ByteStream public key for verification
+      const bytestreamPublicKey = process.env.BYTE_PUB_KEY;
+      if (!bytestreamPublicKey) {
+        return res.status(500).json({ error: "ByteStream public key not configured" });
+      }
+
+      const network = bitcoin.networks.testnet;
+      
+      // Parse the user-signed PSBT
+      const userSignedPsbt = bitcoin.Psbt.fromHex(latestCommitment.userSignedPsbt, { network });
+
+        // Check if the user's PSBT is already finalized (has finalScriptWitness)
+        let isPreFinalized = false;
+        for (let i = 0; i < userSignedPsbt.data.inputs.length; i++) {
+          const uin = userSignedPsbt.data.inputs[i];
+          if (uin.finalScriptWitness) {
+            isPreFinalized = true;
+            break;
+          }
+        }
+
+        // Validate that the user's PSBT actually contains their signatures for script-path spends.
+        // Some wallets pre-finalize PSBTs (put signatures in finalScriptWitness).
+        // Others use standard tapScriptSig or tapKeySig fields.
+        if (!isPreFinalized) {
+          for (let i = 0; i < userSignedPsbt.data.inputs.length; i++) {
+            const uin = userSignedPsbt.data.inputs[i];
+            const hasScriptSigs = Array.isArray(uin.tapScriptSig) && uin.tapScriptSig.length > 0;
+            const hasKeySig = !!uin.tapKeySig;
+            
+            if (!hasScriptSigs && !hasKeySig) {
+              return res.status(400).json({ error: `User-signed PSBT is missing signatures on input ${i}`, details: { inputIndex: i } });
+            }
+          }
+        }
+
+      // Create Taproot signer for ByteStream hub private key
+      const makeTapSigner = (privKey: Buffer) => {
+        const pubCompressed = ecc.pointFromScalar(privKey); // 33 bytes compressed
+        if (!pubCompressed) throw new Error('bad privKey');
+        const xOnly = Buffer.from(pubCompressed).slice(1, 33); // 32 bytes
+        
+        // Verify the derived public key matches the expected ByteStream public key
+        const expectedPubKey = Buffer.from(bytestreamPublicKey, "hex");
+        const expectedXOnly = expectedPubKey.length === 33 ? expectedPubKey.slice(1, 33) : expectedPubKey;
+        
+        if (!xOnly.equals(expectedXOnly)) {
+          console.error('ByteStream key mismatch!');
+          console.error('Derived x-only:', xOnly.toString('hex'));
+          console.error('Expected x-only:', expectedXOnly.toString('hex'));
+          throw new Error('ByteStream private key does not match public key');
+        }
+        
+        return {
+          // Use compressed pubkey here; psbt expects the Signer.publicKey to match what it checks against
+          publicKey: Buffer.from(pubCompressed),
+          // Standard ECDSA sign for compatibility (required by Signer interface)
+          sign: (hash: Buffer) => {
+            const signature = ecc.sign(hash, privKey);
+            if (!signature) throw new Error('Failed to sign');
+            return Buffer.from(signature);
+          },
+          // bitcoinjs-lib calls signSchnorr(hash) with hash Buffer(32)
+          signSchnorr: (hash: Buffer) => {
+            console.log("inside signSchnorr");
+            console.log("private key:", privKey.toString('hex'));
+            // returns 64-byte signature (tiny-secp256k1.signSchnorr)
+            if (typeof ecc.signSchnorr !== 'function') {
+              throw new Error('schnorr not supported in tiny-secp256k1 build');
+            }
+            return ecc.signSchnorr(hash, privKey);
+          }
+        };
+      };
+
+      // Handle pre-finalized PSBTs differently
+      if (isPreFinalized) {
+        // User wallet has already finalized the PSBT with their signature in finalScriptWitness
+        // We need to decode it, add hub signature, re-encode and broadcast
+        
+        if (!wallet.userPublicKey) {
+          return res.status(400).json({ error: "Wallet does not have user public key" });
+        }
+        
+        const tapCtx = buildTaprootContext(wallet.userPublicKey, network);
+        
+        // Create a fresh PSBT to properly compute sighashes for hub signing
+        const psbt = new bitcoin.Psbt({ network });
+        
+        // Add inputs with tapLeafScript for proper sighash computation
+        for (let i = 0; i < userSignedPsbt.txInputs.length; i++) {
+          const txInput = userSignedPsbt.txInputs[i];
+          const input = userSignedPsbt.data.inputs[i];
+          
+          psbt.addInput({
+            hash: txInput.hash,
+            index: txInput.index,
+            witnessUtxo: input.witnessUtxo!,
+            tapLeafScript: [
+              {
+                leafVersion: tapCtx.leafVersion ?? 192,
+                script: tapCtx.scripts.multisig,
+                controlBlock: tapCtx.control[tapCtx.control.length - 1],
+              },
+            ],
+          });
+        }
+        
+        // Copy outputs
+        for (const output of userSignedPsbt.txOutputs) {
+          psbt.addOutput({
+            address: bitcoin.address.fromOutputScript(output.script, network),
+            value: BigInt(output.value),
+          });
+        }
+        
+        // Sign with hub key to get hub signatures
+        const bytestreamSigner = makeTapSigner(Buffer.from(bytestreamPrivateKey, "hex"));
+        for (let i = 0; i < psbt.data.inputs.length; i++) {
+          psbt.signInput(i, bytestreamSigner);
+        }
+        
+        // Extract user's finalized transaction
+        const tx = userSignedPsbt.extractTransaction();
+        
+        // For each input, get hub's signature from our PSBT and add it to user's witness
+        for (let i = 0; i < tx.ins.length; i++) {
+          const userWitness = tx.ins[i].witness || [];
+          
+          if (userWitness.length < 2) {
+            return res.status(400).json({ 
+              error: `Pre-finalized PSBT input ${i} has invalid witness stack`,
+              details: { inputIndex: i, witnessLength: userWitness.length }
+            });
+          }
+          
+          const controlBlock = userWitness[userWitness.length - 1];
+          const script = userWitness[userWitness.length - 2];
+          const userSigs = userWitness.slice(0, -2);
+          
+          // Get hub's signature from our PSBT
+          const hubInput = psbt.data.inputs[i];
+          let hubSig: Buffer | undefined;
+          
+          if (hubInput.tapScriptSig && hubInput.tapScriptSig.length > 0) {
+            // Extract signature from tapScriptSig
+            const sigEntry = hubInput.tapScriptSig[0];
+            if (Buffer.isBuffer(sigEntry)) {
+              hubSig = sigEntry;
+            } else if (typeof sigEntry === 'object' && 'signature' in sigEntry) {
+              hubSig = Buffer.from((sigEntry as any).signature);
+            }
+          }
+          
+          if (!hubSig) {
+            return res.status(500).json({ 
+              error: `Failed to generate hub signature for input ${i}`,
+              details: { inputIndex: i }
+            });
+          }
+          
+          // Rebuild witness: [userSig, hubSig, script, controlBlock]
+          tx.ins[i].witness = [...userSigs, hubSig, script, controlBlock];
+        }
+        
+        const txHex = tx.toHex();
+        const txid = tx.getId();
+        
+        console.log("Pre-finalized transaction with hub signature:", txHex);
+        
+        // Broadcast transaction
+        const broadcastResp = await fetch("https://mempool.space/testnet/api/tx", {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain",
+          },
+          body: txHex,
+        });
+
+        if (!broadcastResp.ok) {
+          const errorText = await broadcastResp.text();
+          const witnesses = tx.ins.map((inp) => (inp.witness || []).map(w => Buffer.from(w).toString('hex')));
+          return res.status(500).json({ error: 'Failed to broadcast pre-finalized transaction', rpc: errorText, txHex, witnesses });
+        }
+
+        const broadcastedTxid = await broadcastResp.text();
+
+        // Update all unsettled commitments for this wallet as settled
+        const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+        for (const commitment of allCommitments) {
+          if (commitment.settled === "false") {
+            await storage.updateL2Commitment(commitment.id, {
+              settled: "true",
+              settlementTxid: broadcastedTxid,
+            });
+          }
+        }
+
+        // Reset wallet L2 balance to 0 after settlement
+        await storage.updateWallet(walletId, { l2Balance: "0" });
+
+        return res.json({
+          success: true,
+          txid: broadcastedTxid,
+          message: "Successfully settled to L1 (pre-finalized PSBT)",
+          txHex,
+        });
+      }
+      
+      // Rebuild PSBT with same structure as PSBT creation (line 872-888)
+      // Get the taproot context for the wallet
+      if (!wallet.userPublicKey) {
+        return res.status(400).json({ error: "Wallet does not have user public key" });
+      }
+      
+      const tapCtx = buildTaprootContext(wallet.userPublicKey, network);
+      const outputScript = Buffer.from(tapCtx.outputScript);
+      
+      // Create a fresh PSBT with same inputs and outputs
+      const psbt = new bitcoin.Psbt({ network });
+      
+      // Copy all inputs from user-signed PSBT with tapLeafScript.
+      // Use the user's tapLeafScript (script, leafVersion, controlBlock) when present
+      // — this preserves the exact control block and leaf index the user used.
+      for (let i = 0; i < userSignedPsbt.txInputs.length; i++) {
+        const txInput = userSignedPsbt.txInputs[i];
+        const input = userSignedPsbt.data.inputs[i];
+
+        // Prefer the user's tapLeafScript entry if available
+        const userLeaf = Array.isArray(input.tapLeafScript) && input.tapLeafScript.length > 0
+          ? input.tapLeafScript[0]
+          : undefined;
+
+        const leafVersion = userLeaf?.leafVersion ?? tapCtx.leafVersion ?? 192;
+        const script = userLeaf?.script ?? tapCtx.scripts.multisig;
+        const controlBlock = userLeaf?.controlBlock ?? tapCtx.control[tapCtx.control.length - 1];
+
+        psbt.addInput({
+          hash: txInput.hash,
+          index: txInput.index,
+          witnessUtxo: input.witnessUtxo!,
+          tapLeafScript: [
+            {
+              leafVersion,
+              script,
+              controlBlock,
+            },
+          ],
+        });
+      }
+      
+      // Copy all outputs from user-signed PSBT
+      for (const output of userSignedPsbt.txOutputs) {
+        psbt.addOutput({
+          address: bitcoin.address.fromOutputScript(output.script, network),
+          value: BigInt(output.value),
+        });
+      }
+
+      // Sign with ByteStream hub private key (makeTapSigner defined earlier)
+      const bytestreamSigner = makeTapSigner(Buffer.from(bytestreamPrivateKey, "hex"));
+
+      // First, copy user's script-path signatures from userSignedPsbt to new psbt
+      // NOTE: We intentionally DO NOT copy `tapKeySig` (key-path signatures)
+      // because we want to enforce script-path signing only for taproot inputs.
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        const userInput = userSignedPsbt.data.inputs[i];
+        // Copy tapScriptSig (Taproot script path signatures)
+        if (userInput.tapScriptSig) {
+          psbt.data.inputs[i].tapScriptSig = userInput.tapScriptSig;
+        }
+      }
+
+      // Now sign all inputs with ByteStream key
+      console.log("PSBT : ", psbt);
+      console.log("psbt.data.inputs.length: ", psbt.data.inputs.length)
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        try {
+          // For taproot inputs, just use signInput - it handles both key path and script path
+          console.log(`Signing input ${i} with ByteStream key`);
+          psbt.signInput(i, bytestreamSigner);
+        } catch (error) {
+          console.error(`Failed to sign input ${i}:`, error);
+          throw error; // Re-throw to prevent finalization with incomplete signatures
+        }
+      }
+      // Remove any tapKeySig (key-path) entries so only script-path signatures remain
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        if (psbt.data.inputs[i].tapKeySig) {
+          delete psbt.data.inputs[i].tapKeySig;
+        }
+      }
+
+      // Finalize inputs with an explicit Taproot script-path finalizer.
+      // This builds `finalScriptWitness` as: [ <schnorr sigs...>, <script>, <controlBlock> ]
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        try {
+          const input = psbt.data.inputs[i];
+
+          // Only apply custom finalizer for inputs that contain a tapLeafScript
+          if (input?.tapLeafScript && input.tapLeafScript.length > 0) {
+            const leaf = input.tapLeafScript[0];
+            const script = leaf.script;
+            const control = leaf.controlBlock;
+
+            // Collect signature-like entries from tapScriptSig (robust to shapes)
+            const sigs: Buffer[] = [];
+            const tapScriptSig = input.tapScriptSig;
+            if (tapScriptSig) {
+              if (Array.isArray(tapScriptSig)) {
+                for (const s of tapScriptSig) {
+                  if (!s) continue;
+                  // If element is an object like { signature: Buffer }
+                  if (typeof s === 'object' && Buffer.isBuffer((s as any).signature)) {
+                    let sigBuf: Buffer = (s as any).signature;
+                    if (sigBuf.length === 65) sigBuf = sigBuf.slice(0, 64);
+                    sigs.push(sigBuf);
+                    continue;
+                  }
+                  if (Buffer.isBuffer(s)) {
+                    let sigBuf: Buffer = s as Buffer;
+                    if (sigBuf.length === 65) {
+                      // Strip trailing sighash-like byte if present (some signers append it)
+                      sigBuf = sigBuf.slice(0, 64);
+                      console.log(`Stripped trailing byte from 65-byte signature on input ${i}`);
+                    }
+                    sigs.push(sigBuf);
+                  }
+                }
+              } else if (Buffer.isBuffer(tapScriptSig)) {
+                let sigBuf: Buffer = tapScriptSig as Buffer;
+                if (sigBuf.length === 65) sigBuf = sigBuf.slice(0, 64);
+                sigs.push(sigBuf);
+              }
+            }
+
+            // Also attempt to include signatures produced by our signer that may not be in tapScriptSig
+            // bitcoinjs-lib usually populates tapScriptSig when signing, but be defensive.
+
+            const finalWitness: Buffer[] = [];
+            for (const s of sigs) finalWitness.push(s);
+            if (script) finalWitness.push(Buffer.from(script));
+            if (control) finalWitness.push(Buffer.from(control));
+
+            // Serialize witness stack into a single Uint8Array: [count][len][data]...[len][data]
+            const encodeVarInt = (n: number) => {
+              if (n < 0xfd) return Buffer.from([n]);
+              if (n <= 0xffff) {
+                const b = Buffer.allocUnsafe(3);
+                b[0] = 0xfd;
+                b.writeUInt16LE(n, 1);
+                return b;
+              }
+              if (n <= 0xffffffff) {
+                const b = Buffer.allocUnsafe(5);
+                b[0] = 0xfe;
+                b.writeUInt32LE(n, 1);
+                return b;
+              }
+              const b = Buffer.allocUnsafe(9);
+              b[0] = 0xff;
+              // write BigUInt64LE
+              b.writeBigUInt64LE(BigInt(n), 1);
+              return b;
+            };
+
+            const witnessParts: Buffer[] = [];
+            witnessParts.push(encodeVarInt(finalWitness.length));
+            for (const item of finalWitness) {
+              witnessParts.push(encodeVarInt(item.length));
+              witnessParts.push(item);
+            }
+            const finalScriptWitness = Buffer.concat(witnessParts);
+
+            // Use psbt.finalizeInput with custom finalizer that returns the serialized witness
+            psbt.finalizeInput(i, () => ({ finalScriptWitness }));
+          } else {
+            // Fallback: let bitcoinjs-lib finalize other input types
+            try {
+              psbt.finalizeInput(i);
+            } catch (e) {
+              // If finalizeInput fails for non-tap inputs, log and rethrow
+              console.error(`Failed to finalize input ${i} with default finalizer:`, e);
+              throw e;
+            }
+          }
+        } catch (err) {
+          console.error(`Error finalizing input ${i}:`, err);
+          throw err;
+        }
+      }
+
+      // Extract the transaction
+      const tx = psbt.extractTransaction();
+      console.log("Finalized transaction:", tx.toHex());
+      const txHex = tx.toHex();
+      const txid = tx.getId();
+
+        // Rebuild witness stacks for taproot script-path inputs to ensure correct order:
+        // [ <script stack items (signatures)>, <script>, <controlBlock> ]
+        try {
+          for (let i = 0; i < tx.ins.length; i++) {
+            const inputPsbt = psbt.data.inputs[i];
+            // Only adjust if we have a tapLeafScript (script-path)
+            if (inputPsbt?.tapLeafScript && inputPsbt.tapLeafScript.length > 0) {
+              const leaf = inputPsbt.tapLeafScript[0];
+              const script = leaf.script;
+              const control = leaf.controlBlock;
+
+              // Collect signature-like items from existing witness (64-byte schnorr or 65-byte DER)
+              const existingWitness = tx.ins[i].witness || [];
+              const sigs: Buffer[] = [];
+              for (const w of existingWitness) {
+                if (!Buffer.isBuffer(w)) continue;
+                if (w.length === 64 || w.length === 65) {
+                  sigs.push(w);
+                }
+              }
+
+              // Rebuild witness: signatures (in original order), then script, then control block
+              const newWitness = [...sigs];
+              if (script) newWitness.push(Buffer.from(script));
+              if (control) newWitness.push(Buffer.from(control));
+
+              // Replace witness for the input
+              tx.ins[i].witness = newWitness;
+              console.log(`Rebuilt witness for input ${i}: sigs=${sigs.length}, scriptPresent=${!!script}, controlPresent=${!!control}`);
+            }
+          }
+        } catch (rebuildErr) {
+          console.error('Error rebuilding witnesses:', rebuildErr);
+        }
+
+        // --- Debug: inspect per-input witness stacks and PSBT tap data ---
+        try {
+          for (let i = 0; i < tx.ins.length; i++) {
+            const inputWitness = tx.ins[i].witness || [];
+            const inputPsbt = psbt.data.inputs[i];
+            console.log(`Input[${i}] witness count: ${inputWitness.length}`);
+            console.log(`Input[${i}] witness (hex):`, inputWitness.map(w => Buffer.from(w).toString('hex')));
+
+            if (inputPsbt) {
+              if (inputPsbt.tapLeafScript && inputPsbt.tapLeafScript.length > 0) {
+                const leaf = inputPsbt.tapLeafScript[0];
+                console.log(`Input[${i}] tapLeafScript leafVersion: ${leaf.leafVersion}`);
+                console.log(`Input[${i}] tapLeafScript script (hex): ${Buffer.from(leaf.script || []).toString('hex')}`);
+                console.log(`Input[${i}] tapLeafScript controlBlock (hex): ${Buffer.from(leaf.controlBlock || []).toString('hex')}`);
+              }
+              if (inputPsbt.tapScriptSig) {
+                console.log(`Input[${i}] tapScriptSig present (length ${inputPsbt.tapScriptSig.length})`);
+              }
+              if (inputPsbt.tapKeySig) {
+                console.log(`Input[${i}] tapKeySig present: ${Buffer.from(inputPsbt.tapKeySig).toString('hex')}`);
+              }
+            }
+
+            // Basic validation: if we have a controlBlock in PSBT, ensure it appears in witness stack
+            const psbtControl = inputPsbt?.tapLeafScript && inputPsbt.tapLeafScript.length > 0 ? inputPsbt.tapLeafScript[0].controlBlock : undefined;
+            if (psbtControl) {
+              const controlHex = Buffer.from(psbtControl).toString('hex');
+              const found = inputWitness.some(w => Buffer.from(w).toString('hex') === controlHex);
+              if (!found) {
+                const msg = `Control block mismatch on input ${i}: controlBlock not found in witness stack`;
+                console.error(msg);
+                // Return error to caller instead of broadcasting invalid tx
+                return res.status(500).json({ error: msg, details: { input: i, controlBlock: controlHex, witness: inputWitness.map(w=>Buffer.from(w).toString('hex')) } });
+              }
+            }
+          }
+        } catch (dbgErr) {
+          console.error('Error during witness debug inspection:', dbgErr);
+        }
+
+      // Broadcast transaction to Bitcoin network
+      const broadcastResp = await fetch("https://mempool.space/testnet/api/tx", {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+        },
+        body: txHex,
+      });
+
+      if (!broadcastResp.ok) {
+        const errorText = await broadcastResp.text();
+        // Include txHex and per-input witness hex for debugging
+        const witnesses = tx.ins.map((inp) => (inp.witness || []).map(w => Buffer.from(w).toString('hex')));
+        return res.status(500).json({ error: 'Failed to broadcast transaction', rpc: errorText, txHex, witnesses });
+      }
+
+      const broadcastedTxid = await broadcastResp.text();
+
+      // Update all unsettled commitments for this wallet as settled
+      const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+      for (const commitment of allCommitments) {
+        if (commitment.settled === "false") {
+          await storage.updateL2Commitment(commitment.id, {
+            settled: "true",
+            settlementTxid: broadcastedTxid,
+          });
+        }
+      }
+
+      // Reset wallet L2 balance to 0 after settlement
+      await storage.updateWallet(walletId, { l2Balance: "0" });
+
+      res.json({
+        success: true,
+        txid: broadcastedTxid,
+        message: "Successfully settled to L1",
+        txHex,
+      });
+    } catch (error) {
+      console.error("Settlement error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to settle to L1";
+      res.status(500).json({ error: errorMessage });
     }
   });
 

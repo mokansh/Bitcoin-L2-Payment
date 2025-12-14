@@ -32,6 +32,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Encode string data to hex without Buffer (works in browser)
 const toHex = (value: string) =>
@@ -269,6 +276,13 @@ function L2SettlementSection() {
   const { wallet, setWallet } = useWallet();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [settlementResult, setSettlementResult] = useState<{
+    txid?: string;
+    txLink?: string;
+    confirmed?: boolean;
+    message?: string;
+  } | null>(null);
 
   const balance = parseFloat(wallet?.l2Balance || "0");
   const isDisabled = !wallet || balance === 0;
@@ -291,6 +305,15 @@ function L2SettlementSection() {
       });
 
       const result = await response.json();
+
+      // Store settlement result and show modal
+      setSettlementResult({
+        txid: result.txid,
+        txLink: result.txLink,
+        confirmed: result.confirmed,
+        message: result.message,
+      });
+      setShowSettlementModal(true);
 
       toast({
         title: "Settlement Initiated",
@@ -372,6 +395,88 @@ function L2SettlementSection() {
             </div>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Settlement Result Modal */}
+        <Dialog open={showSettlementModal} onOpenChange={setShowSettlementModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {settlementResult?.confirmed ? (
+                  <>
+                    <Check className="w-5 h-5 text-green-500" />
+                    Settlement Confirmed
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+                    Settlement Pending
+                  </>
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                {settlementResult?.confirmed
+                  ? "Your settlement transaction has been confirmed on the Bitcoin blockchain."
+                  : "Your settlement transaction has been broadcast and is waiting for confirmation."}
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 pt-4">
+              {/* Confirmation Status */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">Status</span>
+                <Badge variant={settlementResult?.confirmed ? "default" : "secondary"}>
+                  {settlementResult?.confirmed ? "Confirmed" : "Pending Confirmation"}
+                </Badge>
+              </div>
+
+              {/* Transaction ID */}
+              {settlementResult?.txid && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Transaction ID</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs bg-muted p-2 rounded break-all">
+                      {settlementResult.txid}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(settlementResult.txid!);
+                        toast({
+                          title: "Copied",
+                          description: "Transaction ID copied to clipboard",
+                        });
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Transaction Link */}
+              {settlementResult?.txLink && (
+                <div className="pt-2">
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => window.open(settlementResult.txLink, "_blank")}
+                  >
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    View on Mempool Explorer
+                  </Button>
+                </div>
+              )}
+
+              {/* Message */}
+              {settlementResult?.message && (
+                <p className="text-sm text-muted-foreground pt-2">
+                  {settlementResult.message}
+                </p>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

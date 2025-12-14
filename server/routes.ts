@@ -402,9 +402,18 @@ export async function registerRoutes(
       const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
 
       const commitments = await storage.getL2CommitmentsByWalletId(wallet.id);
-      const totalCommitted = commitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
-
-      const correctBalance = (totalFunded - totalCommitted).toFixed(8);
+      const settledCommitments = commitments.filter(c => c.settled === "true");
+      
+      // If there are settled commitments, balance should be 0 (settlement consumes all including dust)
+      let correctBalance: string;
+      if (settledCommitments.length > 0) {
+        correctBalance = "0.00000000";
+      } else {
+        // Only count unsettled commitments
+        const unsettledCommitments = commitments.filter(c => c.settled === "false");
+        const totalCommitted = unsettledCommitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
+        correctBalance = (totalFunded - totalCommitted).toFixed(8);
+      }
 
       // Update stored balance if different
       if (wallet.l2Balance !== correctBalance) {
@@ -436,9 +445,18 @@ export async function registerRoutes(
       const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
 
       const commitments = await storage.getL2CommitmentsByWalletId(wallet.id);
-      const totalCommitted = commitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
-
-      const correctBalance = (totalFunded - totalCommitted).toFixed(8);
+      const settledCommitments = commitments.filter(c => c.settled === "true");
+      
+      // If there are settled commitments, balance should be 0 (settlement consumes all including dust)
+      let correctBalance: string;
+      if (settledCommitments.length > 0) {
+        correctBalance = "0.00000000";
+      } else {
+        // Only count unsettled commitments
+        const unsettledCommitments = commitments.filter(c => c.settled === "false");
+        const totalCommitted = unsettledCommitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
+        correctBalance = (totalFunded - totalCommitted).toFixed(8);
+      }
 
       // Update stored balance if different
       if (wallet.l2Balance !== correctBalance) {
@@ -830,6 +848,9 @@ export async function registerRoutes(
       // Build output script for the Taproot address (witnessUtxo.script)
       const outputScript = tapCtx.outputScript;
 
+      // Dust threshold for Bitcoin (546 sats is standard, using 540 as requested)
+      const DUST_THRESHOLD = BigInt(540);
+
       // Simple fee estimate (placeholder): 300 sats fixed
       const fee = BigInt(300);
       let accumulated = BigInt(0);
@@ -869,7 +890,20 @@ export async function registerRoutes(
         }));
       }
 
-      const totalOutput = desiredOutputs.reduce((sum, o) => sum + o.value, BigInt(0));
+      // Filter out dust outputs (below 540 satoshis)
+      const filteredOutputs = desiredOutputs.filter(out => out.value >= DUST_THRESHOLD);
+      
+      if (filteredOutputs.length === 0) {
+        return res.status(400).json({ 
+          error: "All outputs are below dust threshold (540 sats)",
+          details: {
+            dustThreshold: Number(DUST_THRESHOLD),
+            rejectedOutputs: desiredOutputs.map(o => ({ address: o.address, value: Number(o.value) }))
+          }
+        });
+      }
+
+      const totalOutput = filteredOutputs.reduce((sum, o) => sum + o.value, BigInt(0));
 
       const psbt = new bitcoin.Psbt({ network });
 
@@ -905,15 +939,21 @@ export async function registerRoutes(
         });
       }
 
-      // Add recipient output
-      for (const out of desiredOutputs) {
+      // Add recipient outputs (excluding dust)
+      for (const out of filteredOutputs) {
         psbt.addOutput({ address: out.address, value: out.value });
       }
 
       // Change back to user's connected wallet address (from Unisat)
       const change = accumulated - totalOutput - fee;
       if (change > 0) {
-        psbt.addOutput({ address: wallet.bitcoinAddress, value: change });
+        // Only add change output if it's above dust threshold
+        if (change >= DUST_THRESHOLD) {
+          psbt.addOutput({ address: wallet.bitcoinAddress, value: change });
+        } else {
+          // If change is dust, add it to fee instead
+          console.log(`Change ${change} sats is dust, adding to fee`);
+        }
       }
 
       console.log("PSBT Inputs:", psbt.inputCount);
@@ -1236,6 +1276,49 @@ export async function registerRoutes(
         }
 
         const broadcastedTxid = await broadcastResp.text();
+        const txLink = `https://mempool.space/testnet/tx/${broadcastedTxid}`;
+        
+        console.log(`Transaction broadcast: ${txLink}`);
+        console.log('Waiting for 1 confirmation...');
+
+        // Wait for 1 confirmation
+        let confirmed = false;
+        let attempts = 0;
+        const maxAttempts = 60; // Wait up to 10 minutes (60 * 10s)
+        
+        while (!confirmed && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+          const status = await getBitcoinTxStatus(broadcastedTxid);
+          if (status.confirmed && status.confirmations >= 1) {
+            confirmed = true;
+            console.log(`Transaction confirmed in block ${status.blockHeight}`);
+          } else {
+            attempts++;
+            console.log(`Waiting for confirmation... (attempt ${attempts}/${maxAttempts})`);
+          }
+        }
+
+        if (!confirmed) {
+          // Update commitments but don't reset balance yet
+          const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+          for (const commitment of allCommitments) {
+            if (commitment.settled === "false") {
+              await storage.updateL2Commitment(commitment.id, {
+                settled: "true",
+                settlementTxid: broadcastedTxid,
+              });
+            }
+          }
+          
+          return res.json({
+            success: true,
+            txid: broadcastedTxid,
+            txLink,
+            message: "Transaction broadcast but not yet confirmed. L2 balance not reset.",
+            confirmed: false,
+            txHex,
+          });
+        }
 
         // Update all unsettled commitments for this wallet as settled
         const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
@@ -1248,13 +1331,15 @@ export async function registerRoutes(
           }
         }
 
-        // Reset wallet L2 balance to 0 after settlement
+        // Reset wallet L2 balance to 0 only after confirmation
         await storage.updateWallet(walletId, { l2Balance: "0" });
 
         return res.json({
           success: true,
           txid: broadcastedTxid,
-          message: "Successfully settled to L1 (pre-finalized PSBT)",
+          txLink,
+          message: "Successfully settled to L1 (pre-finalized PSBT) and confirmed",
+          confirmed: true,
           txHex,
         });
       }
@@ -1540,6 +1625,49 @@ export async function registerRoutes(
       }
 
       const broadcastedTxid = await broadcastResp.text();
+      const txLink = `https://mempool.space/testnet/tx/${broadcastedTxid}`;
+      
+      console.log(`Transaction broadcast: ${txLink}`);
+      console.log('Waiting for 1 confirmation...');
+
+      // Wait for 1 confirmation
+      let confirmed = false;
+      let attempts = 0;
+      const maxAttempts = 60; // Wait up to 10 minutes (60 * 10s)
+      
+      while (!confirmed && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+        const status = await getBitcoinTxStatus(broadcastedTxid);
+        if (status.confirmed && status.confirmations >= 1) {
+          confirmed = true;
+          console.log(`Transaction confirmed in block ${status.blockHeight}`);
+        } else {
+          attempts++;
+          console.log(`Waiting for confirmation... (attempt ${attempts}/${maxAttempts})`);
+        }
+      }
+
+      if (!confirmed) {
+        // Update commitments but don't reset balance yet
+        const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+        for (const commitment of allCommitments) {
+          if (commitment.settled === "false") {
+            await storage.updateL2Commitment(commitment.id, {
+              settled: "true",
+              settlementTxid: broadcastedTxid,
+            });
+          }
+        }
+        
+        return res.json({
+          success: true,
+          txid: broadcastedTxid,
+          txLink,
+          message: "Transaction broadcast but not yet confirmed. L2 balance not reset.",
+          confirmed: false,
+          txHex,
+        });
+      }
 
       // Update all unsettled commitments for this wallet as settled
       const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
@@ -1552,18 +1680,80 @@ export async function registerRoutes(
         }
       }
 
-      // Reset wallet L2 balance to 0 after settlement
+      // Reset wallet L2 balance to 0 only after confirmation
       await storage.updateWallet(walletId, { l2Balance: "0" });
 
       res.json({
         success: true,
         txid: broadcastedTxid,
-        message: "Successfully settled to L1",
+        txLink,
+        message: "Successfully settled to L1 and confirmed",
+        confirmed: true,
         txHex,
       });
     } catch (error) {
       console.error("Settlement error:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to settle to L1";
+      res.status(500).json({ error: errorMessage });
+    }
+  });
+
+  // Check and sync settlement confirmation status
+  app.post("/api/sync-settlement/:walletId", async (req, res) => {
+    try {
+      const { walletId } = req.params;
+      
+      const wallet = await storage.getWallet(walletId);
+      if (!wallet) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+
+      // Get all settled commitments for this wallet
+      const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+      const settledCommitments = allCommitments.filter(c => c.settled === "true" && c.settlementTxid);
+
+      if (settledCommitments.length === 0) {
+        return res.status(400).json({ error: "No settled commitments found" });
+      }
+
+      // Check the latest settlement transaction
+      const latestCommitment = settledCommitments[settledCommitments.length - 1];
+      const txid = latestCommitment.settlementTxid!;
+
+      try {
+        const status = await getBitcoinTxStatus(txid);
+        
+        if (status.confirmed && status.confirmations >= 1) {
+          // Transaction is confirmed, reset L2 balance to 0
+          await storage.updateWallet(walletId, { l2Balance: "0" });
+          
+          return res.json({
+            success: true,
+            message: "Settlement confirmed and L2 balance reset to 0",
+            txid,
+            confirmed: true,
+            confirmations: status.confirmations,
+            blockHeight: status.blockHeight,
+          });
+        } else {
+          return res.json({
+            success: true,
+            message: "Settlement transaction found but not yet confirmed",
+            txid,
+            confirmed: false,
+            confirmations: status.confirmations || 0,
+          });
+        }
+      } catch (error) {
+        console.error("Error checking tx status:", error);
+        return res.status(500).json({ 
+          error: "Failed to check transaction status",
+          txid,
+        });
+      }
+    } catch (error) {
+      console.error("Sync settlement error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to sync settlement";
       res.status(500).json({ error: errorMessage });
     }
   });

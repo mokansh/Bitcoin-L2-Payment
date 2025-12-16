@@ -62,19 +62,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to connect wallet";
       setError(message);
-      
-      // For demo purposes, simulate connection if Unisat is not available
-      if (!window.unisat) {
-        const mockAddress = "bc1p" + Array.from({ length: 58 }, () => 
-          "0123456789abcdefghjkmnpqrstuvwxyz"[Math.floor(Math.random() * 32)]
-        ).join("");
-        const mockPubKey = Array.from({ length: 64 }, () => 
-          "0123456789abcdef"[Math.floor(Math.random() * 16)]
-        ).join("");
-        setBitcoinAddress(mockAddress);
-        setPublicKey(mockPubKey);
-        setError(null);
-      }
     } finally {
       setIsConnecting(false);
     }

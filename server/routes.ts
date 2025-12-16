@@ -250,7 +250,214 @@ async function getBitcoinTxStatus(txid: string): Promise<{ confirmed: boolean; c
   }
 }
 
+// Check for pending settlements and update them if confirmed or failed
+async function checkAndUpdatePendingSettlements(walletId: string): Promise<boolean> {
+  try {
+    const wallet = await storage.getWallet(walletId);
+    if (!wallet) return false;
+
+    const commitments = await storage.getL2CommitmentsByWalletId(walletId);
+    
+    // Find settlements that are marked as settled but don't have settlementConfirmedAt yet
+    const pendingSettlements = commitments.filter(c => 
+      c.settled === "true" && 
+      c.settlementTxid && 
+      !c.settlementConfirmedAt
+    );
+    
+    if (pendingSettlements.length === 0) {
+      // No pending settlements, clear lock if it exists
+      if (wallet.settlementInProgress === "true") {
+        await storage.updateWallet(walletId, { 
+          settlementInProgress: "false",
+          pendingSettlementTxid: null 
+        });
+      }
+      return false;
+    }
+    
+    let updated = false;
+    
+    for (const commitment of pendingSettlements) {
+      const txid = commitment.settlementTxid;
+      
+      // Check if settlement transaction is confirmed or failed
+      try {
+        const txResp = await fetch(`https://mempool.space/testnet/api/tx/${txid}`);
+        
+        if (!txResp.ok) {
+          // Transaction not found - might have been dropped from mempool (failed)
+          console.log(`Settlement tx ${txid} not found, considering it failed`);
+          
+          // Mark commitments as unsettled
+          const relatedCommitments = commitments.filter(c => c.settlementTxid === txid);
+          for (const c of relatedCommitments) {
+            await storage.updateL2Commitment(c.id, {
+              settled: "false",
+              settlementTxid: null,
+            });
+          }
+          
+          // Clear settlement lock - user can spend again
+          await storage.updateWallet(walletId, { 
+            settlementInProgress: "false",
+            pendingSettlementTxid: null 
+          });
+          
+          updated = true;
+          continue;
+        }
+        
+        const txData = await txResp.json();
+        
+        // Check if transaction is confirmed
+        if (txData.status?.confirmed && txData.status?.block_time) {
+          const settlementConfirmedAt = new Date(txData.status.block_time * 1000);
+          
+          // Update all commitments with the same settlement txid
+          const relatedCommitments = commitments.filter(c => c.settlementTxid === txid);
+          for (const c of relatedCommitments) {
+            await storage.updateL2Commitment(c.id, {
+              settlementConfirmedAt,
+            });
+          }
+          
+          // Mark all deposits confirmed before settlement as consumed
+          const allTransactions = await storage.getTransactionsByWalletId(walletId);
+          for (const tx of allTransactions) {
+            if (tx.status === "confirmed" && tx.confirmedAt && tx.consumed !== "true") {
+              const txConfirmedAt = new Date(tx.confirmedAt);
+              if (txConfirmedAt <= settlementConfirmedAt) {
+                await storage.updateTransaction(tx.id, { consumed: "true" });
+              }
+            }
+          }
+          
+          // Reset wallet balance to 0 and clear settlement lock
+          await storage.updateWallet(walletId, { 
+            l2Balance: "0",
+            settlementInProgress: "false",
+            pendingSettlementTxid: null 
+          });
+          
+          updated = true;
+          console.log(`Updated pending settlement ${txid} with confirmation time ${settlementConfirmedAt}`);
+        }
+      } catch (error) {
+        console.error(`Error fetching settlement tx ${txid}:`, error);
+      }
+    }
+    
+    return updated;
+  } catch (error) {
+    console.error("Error checking pending settlements:", error);
+    return false;
+  }
+}
+
+// Check all wallets for pending settlements on server startup
+export async function checkAllPendingSettlements(): Promise<void> {
+  try {
+    console.log("Checking all wallets for pending settlements...");
+    
+    // Get all wallets from storage
+    const allWallets = await storage.getAllWallets();
+    
+    if (!allWallets || allWallets.length === 0) {
+      console.log("No wallets found");
+      return;
+    }
+    
+    let totalChecked = 0;
+    let totalUpdated = 0;
+    
+    for (const wallet of allWallets) {
+      totalChecked++;
+      const updated = await checkAndUpdatePendingSettlements(wallet.id);
+      if (updated) {
+        totalUpdated++;
+        console.log(`✓ Updated pending settlements for wallet ${wallet.bitcoinAddress}`);
+      }
+    }
+    
+    console.log(`Checked ${totalChecked} wallets, updated ${totalUpdated} with confirmed/failed settlements`);
+  } catch (error) {
+    console.error("Error checking all pending settlements:", error);
+  }
+}
+
 // Monitor deposits to a Taproot address and store confirmed transactions
+async function recalculateAndUpdateL2Balance(walletId: string): Promise<string> {
+  try {
+    const wallet = await storage.getWallet(walletId);
+    if (!wallet) {
+      return "0.00000000";
+    }
+
+    // Calculate correct L2 balance: funded amount - total commitments
+    const transactions = await storage.getTransactionsByWalletId(walletId);
+    const confirmedTxs = transactions.filter((tx) => tx.status === "confirmed" && tx.consumed !== "true");
+    
+    const commitments = await storage.getL2CommitmentsByWalletId(walletId);
+    const settledCommitments = commitments.filter(c => c.settled === "true");
+    
+    let correctBalance: string = "0.00000000";
+    
+    if (settledCommitments.length > 0) {
+      // Get the latest settlement based on blockchain confirmation time
+      const latestSettlementCommitment = settledCommitments.reduce((latest, c) => {
+        if (!c.settlementConfirmedAt) return latest;
+        const confirmTime = new Date(c.settlementConfirmedAt);
+        return !latest || confirmTime > latest.date ? { date: confirmTime, commitment: c } : latest;
+      }, null as { date: Date; commitment: any } | null);
+      
+      if (latestSettlementCommitment) {
+        const settlementConfirmTime = latestSettlementCommitment.date;
+        
+        // Only count deposits that were CONFIRMED AFTER the settlement confirmation
+        const depositsAfterSettlement = confirmedTxs.filter(tx => {
+          if (!tx.confirmedAt) return false;
+          const txConfirmedAt = new Date(tx.confirmedAt);
+          return txConfirmedAt > settlementConfirmTime;
+        });
+        
+        const totalFundedAfterSettlement = depositsAfterSettlement.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
+        
+        // Only count unsettled commitments
+        const unsettledCommitments = commitments.filter(c => c.settled === "false");
+        const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+          const amount = parseFloat(String(c.amount));
+          const fee = parseFloat(String(c.fee || "0"));
+          return sum + amount + fee;
+        }, 0);
+        
+        correctBalance = (totalFundedAfterSettlement - totalCommitted).toFixed(8);
+      }
+    } else {
+      // No settlements yet - calculate from all deposits
+      const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
+      const unsettledCommitments = commitments.filter(c => c.settled === "false");
+      const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+        const amount = parseFloat(String(c.amount));
+        const fee = parseFloat(String(c.fee || "0"));
+        return sum + amount + fee;
+      }, 0);
+      correctBalance = (totalFunded - totalCommitted).toFixed(8);
+    }
+    
+    // Update stored balance if different
+    if (wallet.l2Balance !== correctBalance) {
+      await storage.updateWallet(walletId, { l2Balance: correctBalance });
+      console.log(`Updated L2 balance for wallet ${walletId}: ${wallet.l2Balance} -> ${correctBalance}`);
+    }
+
+    return correctBalance;
+  } catch (error) {
+    console.error("Error recalculating L2 balance:", error);
+    return "0.00000000";
+  }
+}
+
 async function monitorAndStoreDeposits(walletId: string, taprootAddress: string): Promise<{ newTransactions: number; totalAmount: number }> {
   try {
     const base = "https://mempool.space/testnet/api";
@@ -303,24 +510,46 @@ async function monitorAndStoreDeposits(walletId: string, taprootAddress: string)
       
       // Get transaction timestamp (block_time for confirmed, current time for pending)
       let txTimestamp: Date;
+      let confirmedTimestamp: Date | undefined;
+      
       if (tx.status?.block_time) {
-        txTimestamp = new Date(tx.status.block_time * 1000); // Convert Unix timestamp to milliseconds
+        // Use blockchain confirmation time
+        confirmedTimestamp = new Date(tx.status.block_time * 1000);
+        txTimestamp = confirmedTimestamp;
       } else {
-        txTimestamp = new Date(); // Use current time for pending transactions
+        // Use current time for pending transactions
+        txTimestamp = new Date();
+        confirmedTimestamp = undefined;
       }
       
       if (existingTxIds.has(tx.txid)) {
         // Update existing transaction status if it changed
         const existingTx = existingTxMap.get(tx.txid);
-        if (existingTx && existingTx.status !== status) {
-          try {
-            await storage.updateTransaction(existingTx.id, {
-              status,
-              confirmations: txStatus.confirmations,
-            });
-            // console.log(`Updated transaction ${tx.txid} status to ${status}`);
-          } catch (error) {
-            console.error(`Failed to update transaction ${tx.txid}:`, error);
+        if (existingTx) {
+          const statusChanged = existingTx.status !== status;
+          const needsConfirmedAt = status === "confirmed" && !existingTx.confirmedAt && confirmedTimestamp;
+          
+          if (statusChanged || needsConfirmedAt) {
+            try {
+              console.log(`Updating tx ${tx.txid}: statusChanged=${statusChanged}, needsConfirmedAt=${needsConfirmedAt}, confirmedTimestamp=${confirmedTimestamp?.toISOString()}`);
+              
+              await storage.updateTransaction(existingTx.id, {
+                status,
+                confirmations: txStatus.confirmations,
+                confirmedAt: confirmedTimestamp,
+              });
+              
+              // If transaction just became confirmed or confirmedAt was missing, recalculate L2 balance
+              if (statusChanged && status === "confirmed") {
+                await recalculateAndUpdateL2Balance(walletId);
+                console.log(`Transaction ${tx.txid} confirmed - L2 balance updated`);
+              } else if (needsConfirmedAt) {
+                await recalculateAndUpdateL2Balance(walletId);
+                console.log(`Transaction ${tx.txid} confirmedAt updated - L2 balance recalculated`);
+              }
+            } catch (error) {
+              console.error(`Failed to update transaction ${tx.txid}:`, error);
+            }
           }
         }
       } else {
@@ -333,11 +562,15 @@ async function monitorAndStoreDeposits(walletId: string, taprootAddress: string)
             status,
             confirmations: txStatus.confirmations,
             createdAt: txTimestamp,
+            confirmedAt: confirmedTimestamp,
           });
           
           newTransactions++;
           if (status === "confirmed") {
             totalAmount += amountReceived;
+            // Recalculate L2 balance immediately for confirmed deposits
+            await recalculateAndUpdateL2Balance(walletId);
+            console.log(`New confirmed deposit ${tx.txid} - L2 balance updated`);
           }
           
           // console.log(`Stored deposit transaction ${tx.txid} for wallet ${walletId}: ${amountBTC} BTC (${status})`);
@@ -391,6 +624,9 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Wallet not found" });
       }
 
+      // Check for pending settlements and update if confirmed
+      await checkAndUpdatePendingSettlements(wallet.id);
+
       // Automatically check for new deposits if wallet has taproot address
       if (wallet.taprootAddress) {
         await monitorAndStoreDeposits(wallet.id, wallet.taprootAddress);
@@ -398,23 +634,57 @@ export async function registerRoutes(
 
       // Calculate correct L2 balance: funded amount - total commitments
       const transactions = await storage.getTransactionsByWalletId(wallet.id);
-      const confirmedTxs = transactions.filter((tx) => tx.status === "confirmed");
-      const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
-
+      const confirmedTxs = transactions.filter((tx) => tx.status === "confirmed" && tx.consumed !== "true");
+      
       const commitments = await storage.getL2CommitmentsByWalletId(wallet.id);
       const settledCommitments = commitments.filter(c => c.settled === "true");
       
-      // If there are settled commitments, balance should be 0 (settlement consumes all including dust)
-      let correctBalance: string;
+      let correctBalance: string = "0.00000000";
+      
       if (settledCommitments.length > 0) {
-        correctBalance = "0.00000000";
+        // Get the latest settlement based on blockchain confirmation time
+        const latestSettlementCommitment = settledCommitments.reduce((latest, c) => {
+          if (!c.settlementConfirmedAt) return latest;
+          const confirmTime = new Date(c.settlementConfirmedAt);
+          return !latest || confirmTime > latest.date ? { date: confirmTime, commitment: c } : latest;
+        }, null as { date: Date; commitment: any } | null);
+        
+        if (latestSettlementCommitment) {
+          const settlementConfirmTime = latestSettlementCommitment.date;
+          
+          // Only count deposits that were CONFIRMED AFTER the settlement confirmation
+          // Deposits confirmed before settlement were consumed by it
+          const depositsAfterSettlement = confirmedTxs.filter(tx => {
+            if (!tx.confirmedAt) return false;
+            const txConfirmedAt = new Date(tx.confirmedAt);
+            return txConfirmedAt > settlementConfirmTime;
+          });
+          
+          const totalFundedAfterSettlement = depositsAfterSettlement.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
+          
+          // Only count unsettled commitments
+          const unsettledCommitments = commitments.filter(c => c.settled === "false");
+          const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+            const amount = parseFloat(String(c.amount));
+            const fee = parseFloat(String(c.fee || "0"));
+            return sum + amount + fee;
+          }, 0);
+          
+          // Balance = deposits after settlement - unsettled commitments
+          correctBalance = (totalFundedAfterSettlement - totalCommitted).toFixed(8);
+        }
       } else {
-        // Only count unsettled commitments
+        // No settlements yet - calculate from all deposits
+        const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
         const unsettledCommitments = commitments.filter(c => c.settled === "false");
-        const totalCommitted = unsettledCommitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
+        const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+          const amount = parseFloat(String(c.amount));
+          const fee = parseFloat(String(c.fee || "0"));
+          return sum + amount + fee;
+        }, 0);
         correctBalance = (totalFunded - totalCommitted).toFixed(8);
       }
-
+      
       // Update stored balance if different
       if (wallet.l2Balance !== correctBalance) {
         await storage.updateWallet(wallet.id, { l2Balance: correctBalance });
@@ -434,6 +704,9 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Wallet not found" });
       }
 
+      // Check for pending settlements and update if confirmed
+      await checkAndUpdatePendingSettlements(wallet.id);
+
       // Automatically check for new deposits if wallet has taproot address
       if (wallet.taprootAddress) {
         await monitorAndStoreDeposits(wallet.id, wallet.taprootAddress);
@@ -441,23 +714,57 @@ export async function registerRoutes(
 
       // Calculate correct L2 balance: funded amount - total commitments
       const transactions = await storage.getTransactionsByWalletId(wallet.id);
-      const confirmedTxs = transactions.filter((tx) => tx.status === "confirmed");
-      const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
-
+      const confirmedTxs = transactions.filter((tx) => tx.status === "confirmed" && tx.consumed !== "true");
+      
       const commitments = await storage.getL2CommitmentsByWalletId(wallet.id);
       const settledCommitments = commitments.filter(c => c.settled === "true");
       
-      // If there are settled commitments, balance should be 0 (settlement consumes all including dust)
-      let correctBalance: string;
+      let correctBalance: string = "0.00000000";
+      
       if (settledCommitments.length > 0) {
-        correctBalance = "0.00000000";
+        // Get the latest settlement based on blockchain confirmation time
+        const latestSettlementCommitment = settledCommitments.reduce((latest, c) => {
+          if (!c.settlementConfirmedAt) return latest;
+          const confirmTime = new Date(c.settlementConfirmedAt);
+          return !latest || confirmTime > latest.date ? { date: confirmTime, commitment: c } : latest;
+        }, null as { date: Date; commitment: any } | null);
+        
+        if (latestSettlementCommitment) {
+          const settlementConfirmTime = latestSettlementCommitment.date;
+          
+          // Only count deposits that were CONFIRMED AFTER the settlement confirmation
+          // Deposits confirmed before settlement were already consumed by it
+          const depositsAfterSettlement = confirmedTxs.filter(tx => {
+            if (!tx.confirmedAt) return false; // Skip unconfirmed
+            const txConfirmedAt = new Date(tx.confirmedAt);
+            return txConfirmedAt > settlementConfirmTime;
+          });
+          
+          const totalFundedAfterSettlement = depositsAfterSettlement.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
+          
+          // Only count unsettled commitments
+          const unsettledCommitments = commitments.filter(c => c.settled === "false");
+          const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+            const amount = parseFloat(String(c.amount));
+            const fee = parseFloat(String(c.fee || "0"));
+            return sum + amount + fee;
+          }, 0);
+          
+          // Balance = deposits after settlement - unsettled commitments
+          correctBalance = (totalFundedAfterSettlement - totalCommitted).toFixed(8);
+        }
       } else {
-        // Only count unsettled commitments
+        // No settlements yet - calculate from all deposits
+        const totalFunded = confirmedTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
         const unsettledCommitments = commitments.filter(c => c.settled === "false");
-        const totalCommitted = unsettledCommitments.reduce((sum, c) => sum + parseFloat(String(c.amount)), 0);
+        const totalCommitted = unsettledCommitments.reduce((sum, c) => {
+          const amount = parseFloat(String(c.amount));
+          const fee = parseFloat(String(c.fee || "0"));
+          return sum + amount + fee;
+        }, 0);
         correctBalance = (totalFunded - totalCommitted).toFixed(8);
       }
-
+      
       // Update stored balance if different
       if (wallet.l2Balance !== correctBalance) {
         await storage.updateWallet(wallet.id, { l2Balance: correctBalance });
@@ -734,6 +1041,15 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Payer wallet not found" });
       }
 
+      // Check if settlement is in progress
+      if (payerWallet.settlementInProgress === "true") {
+        return res.status(400).json({ 
+          error: "Settlement in progress",
+          details: "Cannot make payments while settlement is being processed",
+          pendingSettlementTxid: payerWallet.pendingSettlementTxid
+        });
+      }
+
       const currentBalance = parseFloat(payerWallet.l2Balance || "0");
       const paymentAmount = parseFloat(amount);
 
@@ -774,30 +1090,94 @@ export async function registerRoutes(
     try {
       const data = insertL2CommitmentSchema.parse(req.body);
 
-      // Deduct payer L2 balance when creating the commitment
+      // Calculate fee from PSBT
+      const psbt = bitcoin.Psbt.fromHex(data.psbt);
+      
+      // Calculate total inputs
+      let totalInput = BigInt(0);
+      for (const input of psbt.data.inputs) {
+        if (input.witnessUtxo) {
+          totalInput += BigInt(input.witnessUtxo.value);
+        }
+      }
+      
+      // Calculate total outputs
+      let totalOutput = BigInt(0);
+      for (const output of psbt.txOutputs) {
+        totalOutput += BigInt(output.value);
+      }
+      
+      // Fee is the difference between inputs and outputs
+      const feeInSats = Number(totalInput - totalOutput);
+      const feeInBTC = (feeInSats / 100000000).toFixed(8);
+
+      // Deduct payer L2 balance when creating the commitment (amount + fee)
       const wallet = await storage.getWallet(data.walletId);
       if (!wallet) {
         return res.status(404).json({ error: "Wallet not found" });
       }
 
+      // Check if settlement is in progress
+      if (wallet.settlementInProgress === "true") {
+        return res.status(400).json({ 
+          error: "Settlement in progress",
+          details: "Cannot create new commitments while settlement is being processed",
+          pendingSettlementTxid: wallet.pendingSettlementTxid
+        });
+      }
+
+      // Convert to satoshis for precise integer arithmetic
       const amountNum = parseFloat(String(data.amount));
+      console.log("Commitment amount:", amountNum, "Fee in BTC:", feeInBTC);
+      const feeNum = parseFloat(feeInBTC);
       const currentBalance = parseFloat(wallet.l2Balance || "0");
+      
       if (isNaN(amountNum) || amountNum <= 0) {
         return res.status(400).json({ error: "Invalid commitment amount" });
       }
-      if (amountNum > currentBalance) {
-        return res.status(400).json({ error: "Insufficient L2 balance" });
+      
+      // Work in satoshis (integers) to avoid floating-point precision errors
+      const amountSats = Math.round(amountNum * 100000000);
+      const feeSats = Math.round(feeNum * 100000000);
+      const currentBalanceSats = Math.round(currentBalance * 100000000);
+      const totalDeductionSats = amountSats + feeSats;
+      
+      // Convert back to BTC for display and comparison (8 decimal places)
+      const totalDeduction = (totalDeductionSats / 100000000).toFixed(8);
+      console.log("Total deduction (amount + fee):", totalDeduction, "Current balance:", currentBalance);
+      
+      if (totalDeductionSats > currentBalanceSats) {
+        return res.status(400).json({ 
+          error: "Insufficient L2 balance",
+          details: {
+            required: (totalDeductionSats / 100000000).toFixed(8),
+            available: (currentBalanceSats / 100000000).toFixed(8),
+            amount: (amountSats / 100000000).toFixed(8),
+            fee: (feeSats / 100000000).toFixed(8)
+          }
+        });
       }
 
-      const newBalance = (currentBalance - amountNum).toFixed(8);
+      const newBalanceSats = currentBalanceSats - totalDeductionSats;
+      const newBalance = (newBalanceSats / 100000000).toFixed(8);
       await storage.updateWallet(wallet.id, { l2Balance: newBalance });
 
-      const commitment = await storage.createL2Commitment(data);
-      res.status(201).json({ ...commitment, payerBalance: newBalance });
+      // Create commitment with fee
+      const commitment = await storage.createL2Commitment({
+        ...data,
+        fee: feeInBTC
+      });
+      
+      res.status(201).json({ 
+        ...commitment, 
+        payerBalance: newBalance,
+        feeDeducted: feeInBTC
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid commitment data", details: error.errors });
       }
+      console.error("Error creating commitment:", error);
       res.status(500).json({ error: "Failed to create commitment" });
     }
   });
@@ -836,13 +1216,25 @@ export async function registerRoutes(
 
       // Fetch UTXOs from mempool.space
       const base = net === "mainnet" ? "https://mempool.space/api" : "https://mempool.space/testnet/api";
-      const utxoResp = await fetch(`${base}/address/${addressToUse}/utxo`, { headers: { "Content-Type": "application/json" } });
-      if (!utxoResp.ok) {
-        return res.status(502).json({ error: "Failed to fetch UTXOs" });
-      }
-      const utxos: Array<{ txid: string; vout: number; value: number; }> = await utxoResp.json();
-      if (!Array.isArray(utxos) || utxos.length === 0) {
-        return res.status(400).json({ error: "No UTXOs available" });
+      const utxoUrl = `${base}/address/${addressToUse}/utxo`;
+      
+      let utxos: Array<{ txid: string; vout: number; value: number; }> = [];
+      
+      try {
+        const utxoResp = await fetch(utxoUrl, { headers: { "Content-Type": "application/json" } });
+        if (!utxoResp.ok) {
+          console.error(`Failed to fetch UTXOs from ${utxoUrl}: ${utxoResp.status} ${utxoResp.statusText}`);
+          const errorText = await utxoResp.text();
+          console.error(`Response body: ${errorText}`);
+          return res.status(502).json({ error: "Failed to fetch UTXOs", details: `${utxoResp.status} ${utxoResp.statusText}` });
+        }
+        utxos = await utxoResp.json();
+        if (!Array.isArray(utxos) || utxos.length === 0) {
+          return res.status(400).json({ error: "No UTXOs available" });
+        }
+      } catch (fetchError) {
+        console.error(`Error fetching UTXOs from ${utxoUrl}:`, fetchError);
+        return res.status(502).json({ error: "Failed to fetch UTXOs", details: String(fetchError) });
       }
 
       // Build output script for the Taproot address (witnessUtxo.script)
@@ -852,7 +1244,7 @@ export async function registerRoutes(
       const DUST_THRESHOLD = BigInt(540);
 
       // Simple fee estimate (placeholder): 300 sats fixed
-      const fee = BigInt(300);
+      const fee = BigInt(450);
       let accumulated = BigInt(0);
 
       let desiredOutputs = hasOutputsArray
@@ -956,8 +1348,7 @@ export async function registerRoutes(
         }
       }
 
-      console.log("PSBT Inputs:", psbt.inputCount);
-      console.log("PSBT2 : ", psbt)
+      // console.log("PSBT Inputs:", psbt.inputCount);
 
       const psbtHex = psbt.toHex();
       return res.status(200).json({
@@ -993,6 +1384,64 @@ export async function registerRoutes(
       res.json(commitments);
     } catch {
       res.status(500).json({ error: "Failed to fetch commitments" });
+    }
+  });
+
+  // Get settlement history for a wallet
+  app.get("/api/wallets/:walletId/settlements", async (req, res) => {
+    try {
+      const commitments = await storage.getL2CommitmentsByWalletId(req.params.walletId);
+      
+      // Group commitments by settlement txid
+      const settlementsMap = new Map();
+      
+      for (const commitment of commitments) {
+        if (commitment.settled === "true" && commitment.settlementTxid) {
+          if (!settlementsMap.has(commitment.settlementTxid)) {
+            settlementsMap.set(commitment.settlementTxid, {
+              txid: commitment.settlementTxid,
+              confirmedAt: commitment.settlementConfirmedAt,
+              commitments: [],
+              totalAmount: 0,
+              totalFees: 0
+            });
+          }
+          
+          const settlement = settlementsMap.get(commitment.settlementTxid);
+          settlement.commitments.push({
+            id: commitment.id,
+            merchantAddress: commitment.merchantAddress,
+            amount: commitment.amount,
+            fee: commitment.fee,
+            createdAt: commitment.createdAt
+          });
+          settlement.totalAmount += parseFloat(commitment.amount || "0");
+          settlement.totalFees += parseFloat(commitment.fee || "0");
+        }
+      }
+      
+      // Convert map to array and sort by confirmation time (most recent first)
+      const settlements = Array.from(settlementsMap.values())
+        .sort((a, b) => {
+          const dateA = a.confirmedAt ? new Date(a.confirmedAt).getTime() : 0;
+          const dateB = b.confirmedAt ? new Date(b.confirmedAt).getTime() : 0;
+          return dateB - dateA;
+        })
+        .map(s => ({
+          ...s,
+          totalAmount: s.totalAmount.toFixed(8),
+          totalFees: s.totalFees.toFixed(8),
+          commitmentCount: s.commitments.length,
+          // Get the latest commitment (most recent)
+          latestCommitment: s.commitments.sort((a: any, b: any) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )[0]
+        }));
+      
+      res.json(settlements);
+    } catch (error) {
+      console.error("Error fetching settlement history:", error);
+      res.status(500).json({ error: "Failed to fetch settlement history" });
     }
   });
 
@@ -1279,6 +1728,13 @@ export async function registerRoutes(
         const txLink = `https://mempool.space/testnet/tx/${broadcastedTxid}`;
         
         console.log(`Transaction broadcast: ${txLink}`);
+        
+        // Set settlement lock immediately after broadcast
+        await storage.updateWallet(walletId, { 
+          settlementInProgress: "true",
+          pendingSettlementTxid: broadcastedTxid 
+        });
+        
         console.log('Waiting for 1 confirmation...');
 
         // Wait for 1 confirmation
@@ -1331,8 +1787,12 @@ export async function registerRoutes(
           }
         }
 
-        // Reset wallet L2 balance to 0 only after confirmation
-        await storage.updateWallet(walletId, { l2Balance: "0" });
+        // Reset wallet L2 balance to 0 and clear settlement lock
+        await storage.updateWallet(walletId, { 
+          l2Balance: "0",
+          settlementInProgress: "false",
+          pendingSettlementTxid: null 
+        });
 
         return res.json({
           success: true,
@@ -1628,18 +2088,40 @@ export async function registerRoutes(
       const txLink = `https://mempool.space/testnet/tx/${broadcastedTxid}`;
       
       console.log(`Transaction broadcast: ${txLink}`);
+      
+      // Set settlement lock immediately after broadcast
+      await storage.updateWallet(walletId, { 
+        settlementInProgress: "true",
+        pendingSettlementTxid: broadcastedTxid 
+      });
+      
       console.log('Waiting for 1 confirmation...');
 
       // Wait for 1 confirmation
       let confirmed = false;
       let attempts = 0;
       const maxAttempts = 60; // Wait up to 10 minutes (60 * 10s)
+      let settlementConfirmedAt: Date | undefined;
       
       while (!confirmed && attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
         const status = await getBitcoinTxStatus(broadcastedTxid);
         if (status.confirmed && status.confirmations >= 1) {
           confirmed = true;
+          
+          // Fetch settlement transaction to get blockchain confirmation time
+          try {
+            const txResp = await fetch(`https://mempool.space/testnet/api/tx/${broadcastedTxid}`);
+            if (txResp.ok) {
+              const txData = await txResp.json();
+              if (txData.status?.block_time) {
+                settlementConfirmedAt = new Date(txData.status.block_time * 1000);
+              }
+            }
+          } catch (error) {
+            console.error("Error fetching settlement tx time:", error);
+          }
+          
           console.log(`Transaction confirmed in block ${status.blockHeight}`);
         } else {
           attempts++;
@@ -1676,12 +2158,31 @@ export async function registerRoutes(
           await storage.updateL2Commitment(commitment.id, {
             settled: "true",
             settlementTxid: broadcastedTxid,
+            settlementConfirmedAt,
           });
         }
       }
 
-      // Reset wallet L2 balance to 0 only after confirmation
-      await storage.updateWallet(walletId, { l2Balance: "0" });
+      // Mark all deposits confirmed before settlement as consumed
+      if (settlementConfirmedAt) {
+        const allTransactions = await storage.getTransactionsByWalletId(walletId);
+        for (const tx of allTransactions) {
+          if (tx.status === "confirmed" && tx.confirmedAt) {
+            const txConfirmedAt = new Date(tx.confirmedAt);
+            // If deposit was confirmed before or at settlement time, mark as consumed
+            if (txConfirmedAt <= settlementConfirmedAt) {
+              await storage.updateTransaction(tx.id, { consumed: "true" });
+            }
+          }
+        }
+      }
+
+      // Reset wallet L2 balance to 0 and clear settlement lock
+      await storage.updateWallet(walletId, { 
+        l2Balance: "0",
+        settlementInProgress: "false",
+        pendingSettlementTxid: null 
+      });
 
       res.json({
         success: true,
@@ -1694,6 +2195,19 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Settlement error:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to settle to L1";
+      
+      // Clear settlement lock on error
+      try {
+        const { walletId } = req.body;
+        if (walletId) {
+          await storage.updateWallet(walletId, { 
+            settlementInProgress: "false",
+            pendingSettlementTxid: null 
+          });
+        }
+      } catch (clearError) {
+        console.error("Error clearing settlement lock:", clearError);
+      }
       res.status(500).json({ error: errorMessage });
     }
   });

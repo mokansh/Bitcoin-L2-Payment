@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
+import { registerRoutes, checkAllPendingSettlements } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
@@ -61,6 +61,9 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  
+  // Check all wallets for pending settlements on startup
+  await checkAllPendingSettlements();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

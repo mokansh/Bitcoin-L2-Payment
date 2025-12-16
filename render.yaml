@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: byte-stream
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: byte-stream-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+
+databases:
+  - name: byte-stream-db
+    plan: free
+    databaseName: bytestream
+    user: bytestream

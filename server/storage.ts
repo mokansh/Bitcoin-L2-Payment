@@ -20,6 +20,7 @@ export interface IStorage {
   // Wallets
   getWallet(id: string): Promise<Wallet | undefined>;
   getWalletByBitcoinAddress(address: string): Promise<Wallet | undefined>;
+  getAllWallets(): Promise<Wallet[]>;
   createWallet(wallet: InsertWallet): Promise<Wallet>;
   updateWallet(id: string, updates: Partial<Wallet>): Promise<Wallet | undefined>;
 
@@ -73,6 +74,10 @@ export class DatabaseStorage implements IStorage {
   async getWalletByBitcoinAddress(address: string): Promise<Wallet | undefined> {
     const [wallet] = await db.select().from(wallets).where(eq(wallets.bitcoinAddress, address));
     return wallet;
+  }
+
+  async getAllWallets(): Promise<Wallet[]> {
+    return await db.select().from(wallets);
   }
 
   async createWallet(insertWallet: InsertWallet): Promise<Wallet> {

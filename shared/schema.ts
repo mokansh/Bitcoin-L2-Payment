@@ -16,6 +16,8 @@ export const wallets = pgTable("wallets", {
   bytestreamPublicKey: text("bytestream_public_key"),
   userPublicKey: text("user_public_key"),
   l2Balance: numeric("l2_balance").default("0"),
+  settlementInProgress: text("settlement_in_progress").default("false"),
+  pendingSettlementTxid: text("pending_settlement_txid"),
 });
 
 export const transactions = pgTable("transactions", {
@@ -26,6 +28,8 @@ export const transactions = pgTable("transactions", {
   status: text("status").notNull().default("pending"),
   confirmations: integer("confirmations").default(0),
   createdAt: timestamp("created_at").default(sql`now()`),
+  confirmedAt: timestamp("confirmed_at"), // Blockchain confirmation time
+  consumed: text("consumed").default("false"), // Whether this deposit was consumed by settlement
 });
 
 export const l2Commitments = pgTable("l2_commitments", {
@@ -33,10 +37,12 @@ export const l2Commitments = pgTable("l2_commitments", {
   walletId: varchar("wallet_id").notNull(),
   merchantAddress: text("merchant_address").notNull(),
   amount: numeric("amount").notNull(),
+  fee: numeric("fee").default("0"),
   psbt: text("psbt").notNull(),
   userSignedPsbt: text("user_signed_psbt"),
   settled: text("settled").default("false"),
   settlementTxid: text("settlement_txid"),
+  settlementConfirmedAt: timestamp("settlement_confirmed_at"), // Blockchain settlement confirmation time
   createdAt: timestamp("created_at", { mode: 'string' }).default(sql`(now() AT TIME ZONE 'Asia/Kolkata')`),
 });
 
@@ -67,6 +73,7 @@ export const insertTransactionSchema = createInsertSchema(transactions).pick({
   status: true,
   confirmations: true,
   createdAt: true,
+  confirmedAt: true,
 });
 
 export const insertMerchantSchema = createInsertSchema(merchants).pick({
@@ -79,11 +86,13 @@ export const insertL2CommitmentSchema = createInsertSchema(l2Commitments).pick({
   walletId: true,
   merchantAddress: true,
   amount: true,
+  fee: true,
   psbt: true,
   userSignedPsbt: true,
   settled: true,
   settlementTxid: true,
 }).extend({
+  fee: z.string().optional().nullable(),
   userSignedPsbt: z.string().optional().nullable(),
   settlementTxid: z.string().optional().nullable(),
 });

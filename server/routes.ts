@@ -1740,10 +1740,10 @@ export async function registerRoutes(
         // Wait for 1 confirmation
         let confirmed = false;
         let attempts = 0;
-        const maxAttempts = 60; // Wait up to 10 minutes (60 * 10s)
+        const maxAttempts = 7; // Wait up to 21 minutes (7 * 3 minutes)
         
         while (!confirmed && attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+          await new Promise(resolve => setTimeout(resolve, 180000)); // Wait 3 minutes
           const status = await getBitcoinTxStatus(broadcastedTxid);
           if (status.confirmed && status.confirmations >= 1) {
             confirmed = true;
@@ -2100,11 +2100,11 @@ export async function registerRoutes(
       // Wait for 1 confirmation
       let confirmed = false;
       let attempts = 0;
-      const maxAttempts = 60; // Wait up to 10 minutes (60 * 10s)
+      const maxAttempts = 7; // Wait up to 21 minutes (7 * 3 minutes)
       let settlementConfirmedAt: Date | undefined;
       
       while (!confirmed && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+        await new Promise(resolve => setTimeout(resolve, 180000)); // Wait 3 minutes
         const status = await getBitcoinTxStatus(broadcastedTxid);
         if (status.confirmed && status.confirmations >= 1) {
           confirmed = true;

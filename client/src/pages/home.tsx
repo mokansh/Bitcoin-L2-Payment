@@ -421,6 +421,42 @@ function L2SettlementSection() {
     return () => clearInterval(pollInterval);
   }, [settlementResult?.txid, settlementResult?.confirmed, wallet, setWallet]);
 
+  // Poll for settlement in progress confirmation (independent of modal)
+  useEffect(() => {
+    if (!wallet?.pendingSettlementTxid || wallet.settlementInProgress !== "true") {
+      return;
+    }
+
+    const pollSettlement = setInterval(async () => {
+      try {
+        const response = await fetch(`https://mempool.space/testnet/api/tx/${wallet.pendingSettlementTxid}/status`);
+        if (response.ok) {
+          const status = await response.json();
+          
+          if (status.confirmed) {
+            console.log("Settlement confirmed, refreshing wallet...");
+            
+            // Refresh wallet to get updated state
+            const walletResponse = await fetch(`/api/wallets/${wallet.id}`);
+            const updatedWallet = await walletResponse.json();
+            setWallet(updatedWallet);
+            
+            toast({
+              title: "Settlement Confirmed",
+              description: "Your settlement has been confirmed on Bitcoin L1",
+            });
+            
+            clearInterval(pollSettlement);
+          }
+        }
+      } catch (error) {
+        console.error("Error polling settlement status:", error);
+      }
+    }, 10000); // Poll every 10 seconds
+
+    return () => clearInterval(pollSettlement);
+  }, [wallet?.pendingSettlementTxid, wallet?.settlementInProgress, wallet?.id, setWallet, toast]);
+
   const handleSettleToL1 = async () => {
     if (!wallet) {
       toast({
@@ -457,7 +493,7 @@ function L2SettlementSection() {
         txLink: result.txLink,
         confirmed: result.confirmed || false,
         confirmations: result.confirmed ? 1 : 0,
-        message: result.message,
+        message: "Settlement tx broadcasted, waiting for block confirmation",
       });
 
       toast({
@@ -465,12 +501,10 @@ function L2SettlementSection() {
         description: "User and merchant balances are being settled on Bitcoin L1",
       });
 
-      // Refresh wallet balance if already confirmed
-      if (result.confirmed) {
-        const walletResponse = await fetch(`/api/wallets/${wallet.id}`);
-        const updatedWallet = await walletResponse.json();
-        setWallet(updatedWallet);
-      }
+      // Refresh wallet to show settlement in progress
+      const walletResponse = await fetch(`/api/wallets/${wallet.id}`);
+      const updatedWallet = await walletResponse.json();
+      setWallet(updatedWallet);
     } catch (error) {
       // Update modal with error
       setSettlementResult({
@@ -701,6 +735,18 @@ function L2SettlementSection() {
                       </Button>
                     </div>
                   </div>
+
+                  {/* Close Button */}
+                  {!settlementResult.confirmed && (
+                    <div className="pt-4">
+                      <Button
+                        className="w-full"
+                        onClick={() => setShowSettlementModal(false)}
+                      >
+                        Close
+                      </Button>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -1365,6 +1411,7 @@ function MerchantPaymentSection() {
               onClick={handleReset}
               variant="outline"
               className="w-full"
+              disabled={wallet?.settlementInProgress === "true"}
               data-testid="button-create-another-payment"
             >
               Create Another Payment

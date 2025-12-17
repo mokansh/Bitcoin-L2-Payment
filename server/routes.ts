@@ -265,7 +265,9 @@ async function checkAndUpdatePendingSettlements(walletId: string): Promise<boole
       !c.settlementConfirmedAt
     );
     
-    if (pendingSettlements.length === 0) {
+    // Only clear the lock if there are no pending settlements AND no pending settlement txid
+    // This prevents race conditions where the settlement is still broadcasting
+    if (pendingSettlements.length === 0 && !wallet.pendingSettlementTxid) {
       // No pending settlements, clear lock if it exists
       if (wallet.settlementInProgress === "true") {
         await storage.updateWallet(walletId, { 
@@ -273,6 +275,30 @@ async function checkAndUpdatePendingSettlements(walletId: string): Promise<boole
           pendingSettlementTxid: null 
         });
       }
+      return false;
+    }
+    
+    // If we have a pending settlement txid but no pending commitments,
+    // check if the settlement transaction is confirmed
+    if (wallet.pendingSettlementTxid && pendingSettlements.length === 0) {
+      try {
+        const txResp = await fetch(`https://mempool.space/testnet/api/tx/${wallet.pendingSettlementTxid}`);
+        if (txResp.ok) {
+          const txData = await txResp.json();
+          if (txData.status?.confirmed) {
+            // Settlement is confirmed, clear the lock
+            console.log(`Clearing settlement lock - tx ${wallet.pendingSettlementTxid} is confirmed`);
+            await storage.updateWallet(walletId, { 
+              settlementInProgress: "false",
+              pendingSettlementTxid: null 
+            });
+            return true;
+          }
+        }
+      } catch (error) {
+        console.error(`Error checking pending settlement tx ${wallet.pendingSettlementTxid}:`, error);
+      }
+      // Transaction not confirmed yet, keep the lock
       return false;
     }
     
@@ -2089,6 +2115,18 @@ export async function registerRoutes(
       
       console.log(`Transaction broadcast: ${txLink}`);
       
+      // Mark all unsettled commitments as settled with txid IMMEDIATELY after broadcast
+      // This ensures the state is persisted even if server restarts during confirmation wait
+      const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
+      for (const commitment of allCommitments) {
+        if (commitment.settled === "false") {
+          await storage.updateL2Commitment(commitment.id, {
+            settled: "true",
+            settlementTxid: broadcastedTxid,
+          });
+        }
+      }
+      
       // Set settlement lock immediately after broadcast
       await storage.updateWallet(walletId, { 
         settlementInProgress: "true",
@@ -2130,17 +2168,8 @@ export async function registerRoutes(
       }
 
       if (!confirmed) {
-        // Update commitments but don't reset balance yet
-        const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
-        for (const commitment of allCommitments) {
-          if (commitment.settled === "false") {
-            await storage.updateL2Commitment(commitment.id, {
-              settled: "true",
-              settlementTxid: broadcastedTxid,
-            });
-          }
-        }
-        
+        // Transaction broadcast but not confirmed within timeout
+        // Commitments are already marked as settled, just return
         return res.json({
           success: true,
           txid: broadcastedTxid,
@@ -2151,16 +2180,12 @@ export async function registerRoutes(
         });
       }
 
-      // Update all unsettled commitments for this wallet as settled
-      const allCommitments = await storage.getL2CommitmentsByWalletId(walletId);
-      for (const commitment of allCommitments) {
-        if (commitment.settled === "false") {
-          await storage.updateL2Commitment(commitment.id, {
-            settled: "true",
-            settlementTxid: broadcastedTxid,
-            settlementConfirmedAt,
-          });
-        }
+      // Update all settled commitments with confirmation timestamp
+      const settledCommitments = allCommitments.filter(c => c.settlementTxid === broadcastedTxid);
+      for (const commitment of settledCommitments) {
+        await storage.updateL2Commitment(commitment.id, {
+          settlementConfirmedAt,
+        });
       }
 
       // Mark all deposits confirmed before settlement as consumed

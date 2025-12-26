@@ -23,7 +23,8 @@ import {
   Zap,
   ExternalLink,
   Moon,
-  Sun
+  Sun,
+  RefreshCw
 } from "lucide-react";
 import {
   AlertDialog,
@@ -83,14 +84,14 @@ function Header() {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 h-16 bg-[#1a1d29] border-b border-gray-800 z-50">
-      <div className="w-full h-full px-0 flex items-center justify-between gap-2 md:gap-4">
+    <header className="fixed top-0 left-0 right-0 h-20 bg-gradient-to-br from-background via-background to-orange-500/5 backdrop-blur-md border-b border-gray-800/50 z-50 shadow-lg">
+      <div className="w-full h-full px-6 md:px-16 lg:px-24 flex items-center justify-between gap-2 md:gap-4">
         {/* Logo - Extreme Left */}
-        <div className="flex items-center gap-2 px-3 md:px-6">
-          <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center">
-            <Bitcoin className="w-4 h-4 md:w-5 md:h-5 text-white" />
+        <div className="flex items-center gap-2 px-3 md:px-6 group">
+          <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/20 group-hover:shadow-orange-500/40 transition-all duration-300">
+            <Bitcoin className="w-4 h-4 md:w-5 md:h-5 text-white group-hover:rotate-12 transition-transform duration-300" />
           </div>
-          <span className="text-base md:text-xl font-semibold text-white">ByteStream</span>
+          <span className="text-xl md:text-2xl lg:text-3xl font-bold text-white bg-gradient-to-r from-white to-gray-300 bg-clip-text">ByteStream</span>
         </div>
         
         {/* Navigation - Center - Hidden on mobile */}
@@ -141,7 +142,7 @@ function Header() {
             <>
               <button
                 onClick={handleCopy}
-                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors text-gray-300"
+                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-gray-800/50 hover:bg-gray-700 transition-all duration-200 text-gray-300 border border-gray-700/50 hover:border-gray-600 backdrop-blur-sm"
                 data-testid="button-copy-address"
               >
                 <WalletIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />
@@ -166,7 +167,7 @@ function Header() {
             <Button
               onClick={connectWallet}
               disabled={isConnecting}
-              className="bg-orange-500 hover:bg-orange-600 text-white text-xs md:text-sm h-8 md:h-9 px-2 md:px-4"
+              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs md:text-sm h-8 md:h-9 px-2 md:px-4 shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transition-all duration-300"
               data-testid="button-connect-wallet"
             >
               {isConnecting ? (
@@ -308,49 +309,29 @@ function GenerateWalletSection() {
 
   const isDisabled = !bitcoinAddress;
 
+
+  // Always show the card, but show loader in the address section if taproot address is not available
   return (
-    <Card className={`h-full ${isDisabled ? "opacity-50" : ""}`}>
+    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
-        <div>
-          <CardTitle className="text-lg">Your ByteStream Wallet</CardTitle>
-          <CardDescription>{wallet ? "Your Taproot address for L2 deposits" : "Creating your Taproot address for L2 deposits"}</CardDescription>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30 group-hover:shadow-orange-500/50 transition-all duration-300 group-hover:scale-110">
+            <WalletIcon className="w-5 h-5 text-white group-hover:rotate-12 transition-transform duration-300" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Your ByteStream Wallet</CardTitle>
+            <CardDescription>Your Taproot address for L2 deposits</CardDescription>
+          </div>
         </div>
-        {/* <StepIndicator step={1} label="Generate" active={!!bitcoinAddress && !wallet} completed={!!wallet} /> */}
       </CardHeader>
       <CardContent className="space-y-4">
-        {!wallet ? (
-          isChecking ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              <span className="ml-2 text-sm text-muted-foreground">Checking for existing wallet...</span>
-            </div>
-          ) : (
-            <Button
-              onClick={handleGenerate}
-              disabled={isDisabled || createWalletMutation.isPending}
-              className="w-full"
-              data-testid="button-generate-wallet"
-            >
-              {createWalletMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Generating Taproot Address...
-                </>
-              ) : (
-                <>
-                  <Bitcoin className="w-4 h-4 mr-2" />
-                  Generate ByteStream Wallet
-                </>
-              )}
-            </Button>
-          )
-        ) : (
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-muted/50 border">
+        <div className="p-4 rounded-lg bg-muted/50 border min-h-[96px] flex items-center justify-center">
+          {wallet?.taprootAddress ? (
+            <>
               <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Your Taproot Address
+                Your ByteStream Wallet Address
               </Label>
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex items-center gap-2 w-full">
                 <code className="flex-1 font-mono text-sm break-all">{wallet.taprootAddress}</code>
                 <Button
                   variant="ghost"
@@ -361,9 +342,55 @@ function GenerateWalletSection() {
                   {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
+            </>
+          ) : (
+            <div className="w-full flex flex-col items-center justify-center py-4">
+              <span className="relative flex h-16 w-16 items-center justify-center">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80 z-0 border-4 border-orange-500"></span>
+                <span className="relative inline-flex rounded-full h-16 w-16 bg-white border-4 border-orange-500 items-center justify-center z-10">
+                  <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+                </span>
+              </span>
+              <span className="text-lg font-semibold text-orange-600 dark:text-orange-400 mt-4">Generating your ByteStream wallet...</span>
+              <span className="text-base text-muted-foreground">This may take a few seconds.</span>
             </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  // Only show the address section when wallet.taprootAddress is present
+  return (
+    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30 group-hover:shadow-orange-500/50 transition-all duration-300 group-hover:scale-110">
+            <WalletIcon className="w-5 h-5 text-white group-hover:rotate-12 transition-transform duration-300" />
           </div>
-        )}
+          <div>
+            <CardTitle className="text-lg">Your ByteStream Wallet</CardTitle>
+            <CardDescription>Your Taproot address for L2 deposits</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="p-4 rounded-lg bg-muted/50 border">
+          <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Your ByteStream Wallet Address
+          </Label>
+          <div className="mt-2 flex items-center gap-2">
+            <code className="flex-1 font-mono text-sm break-all">{wallet.taprootAddress}</code>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleCopy}
+              data-testid="button-copy-taproot"
+            >
+              {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -373,7 +400,11 @@ function L2SettlementSection() {
   const { wallet, setWallet } = useWallet();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedSettlement, setSelectedSettlement] = useState<any>(null);
+  const [visibleCount, setVisibleCount] = useState(5);
   const [settlementResult, setSettlementResult] = useState<{
     txid?: string;
     txLink?: string;
@@ -381,6 +412,19 @@ function L2SettlementSection() {
     confirmations?: number;
     message?: string;
   } | null>(null);
+
+  // Fetch settlement history
+  const { data: settlements, isLoading: isLoadingHistory } = useQuery({
+    queryKey: ["/api/wallets/:walletId/settlements", wallet?.id],
+    queryFn: async () => {
+      if (!wallet?.id) return [];
+      const response = await fetch(`/api/wallets/${wallet.id}/settlements`);
+      if (!response.ok) throw new Error("Failed to fetch settlements");
+      return response.json();
+    },
+    enabled: !!wallet?.id,
+    refetchInterval: 10000, // Refetch every 10 seconds to catch confirmed settlements
+  });
 
   // Fetch latest unsettled commitment
   const { data: latestCommitment } = useQuery({
@@ -407,6 +451,32 @@ function L2SettlementSection() {
   
   // Disable only if no wallet OR (balance is 0 AND no unsettled commitment)
   const isDisabled = !wallet || (balance === 0 && !hasUnsettledCommitment);
+
+  const handleRefresh = async () => {
+    if (!wallet?.id) return;
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["/api/wallets/:walletId/settlements", wallet.id] });
+      await queryClient.invalidateQueries({ queryKey: ["latestCommitment", wallet.id] });
+      const response = await fetch(`/api/wallets/${wallet.id}`);
+      if (response.ok) {
+        const updatedWallet = await response.json();
+        setWallet(updatedWallet);
+      }
+      toast({
+        title: "Data Refreshed",
+        description: "Settlement data has been updated.",
+      });
+    } catch (error) {
+      toast({
+        title: "Refresh Failed",
+        description: "Could not refresh data.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Poll for confirmation status
   useEffect(() => {
@@ -546,18 +616,39 @@ function L2SettlementSection() {
   };
 
   return (
-    <Card className={`h-full ${isDisabled ? "opacity-50" : ""}`}>
-      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
-        <div>
-          <CardTitle className="text-lg">Settle to Bitcoin L1</CardTitle>
-          <CardDescription>Settle user and merchant balances to Bitcoin mainnet</CardDescription>
+    <Card className={`transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+      <CardHeader className="space-y-0 pb-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 group-hover:shadow-blue-500/50 transition-all duration-300 group-hover:scale-110">
+              <Bitcoin className="w-5 h-5 text-white group-hover:rotate-180 transition-transform duration-500" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Settle to Bitcoin L1</CardTitle>
+              <CardDescription>Settle user and merchant balances to Bitcoin mainnet</CardDescription>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={!wallet || isRefreshing}
+              className="h-8 w-8"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHistoryModal(true)}
+              disabled={!wallet}
+              className="text-xs"
+            >
+              History
+            </Button>
+          </div>
         </div>
-        <StepIndicator
-          step={4}
-          label="Settle"
-          active={!!wallet && (balance > 0 || hasUnsettledCommitment)}
-          completed={false}
-        />
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Settlement in Progress Warning */}
@@ -871,6 +962,210 @@ function L2SettlementSection() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Settlement History Modal */}
+        <AlertDialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
+          <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <AlertDialogTitle>Settlement History</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-4">
+                {isLoadingHistory ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : !settlements || settlements.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No settlements found
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {settlements.slice(0, visibleCount).map((settlement: any) => (
+                      <div 
+                        key={settlement.txid} 
+                        className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/5 transition-colors cursor-pointer"
+                        onClick={() => setSelectedSettlement(settlement)}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center bg-green-500/10 text-green-600">
+                            <Check className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="font-medium">L1 Settlement</div>
+                            <div className="text-xs text-muted-foreground font-mono">
+                              {settlement.confirmedAt ? new Date(settlement.confirmedAt).toLocaleString('en-IN', { 
+                                timeZone: 'Asia/Kolkata', 
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              }) : 'Pending'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-green-600">
+                            {formatBTC(settlement.totalAmount)} BTC
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {settlement.commitmentCount} commitment{settlement.commitmentCount > 1 ? 's' : ''}
+                          </div>
+                          <div className="text-xs text-orange-600">
+                            Fee: {formatBTC(settlement.totalFees)} BTC
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {settlements.length > visibleCount && (
+                      <Button 
+                        variant="outline" 
+                        className="w-full"
+                        onClick={() => setVisibleCount(prev => prev + 5)}
+                      >
+                        View More
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+            <div className="flex justify-end pt-4">
+              <AlertDialogAction onClick={() => setShowHistoryModal(false)}>
+                Close
+              </AlertDialogAction>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Settlement Details Dialog */}
+        {selectedSettlement && (
+          <AlertDialog open={!!selectedSettlement} onOpenChange={() => setSelectedSettlement(null)}>
+            <AlertDialogContent className="max-w-2xl">
+              <AlertDialogTitle>Settlement Details</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-4 pt-4">
+                  {/* Status */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Status</span>
+                    <Badge variant="default">Confirmed on L1</Badge>
+                  </div>
+
+                  {/* Total Amount */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Total Settled</span>
+                    <span className="font-mono font-bold text-green-600">{formatBTC(selectedSettlement.totalAmount)} BTC</span>
+                  </div>
+
+                  {/* Network Fee */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Network Fee</span>
+                    <span className="font-mono text-orange-600">{formatBTC(selectedSettlement.totalFees)} BTC</span>
+                  </div>
+
+                  {/* Commitments Count */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Commitments Settled</span>
+                    <span className="font-mono">{selectedSettlement.commitmentCount}</span>
+                  </div>
+
+                  {/* Latest Commitment Details */}
+                  {selectedSettlement.latestCommitment && (
+                    <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                      <div className="text-sm font-medium mb-2 text-blue-600">Latest Commitment</div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Amount:</span>
+                          <span className="font-mono">{formatBTC(selectedSettlement.latestCommitment.amount)} BTC</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">To:</span>
+                          <span className="font-mono text-xs">{formatAddress(selectedSettlement.latestCommitment.merchantAddress)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Created:</span>
+                          <span className="text-xs">
+                            {new Date(selectedSettlement.latestCommitment.createdAt).toLocaleString('en-IN', { 
+                              timeZone: 'Asia/Kolkata', 
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Confirmation Time */}
+                  {selectedSettlement.confirmedAt && (
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                      <span className="text-sm font-medium">Confirmed At</span>
+                      <span className="font-mono text-sm">
+                        {new Date(selectedSettlement.confirmedAt).toLocaleString('en-IN', { 
+                          timeZone: 'Asia/Kolkata', 
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: true
+                        })}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Transaction ID */}
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium">Transaction ID</span>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(selectedSettlement.txid);
+                            toast({
+                              title: "Copied",
+                              description: "Transaction ID copied to clipboard",
+                            });
+                          }}
+                        >
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          asChild
+                        >
+                          <a
+                            href={`https://mempool.space/testnet/tx/${selectedSettlement.txid}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="font-mono text-xs break-all bg-background p-2 rounded border">
+                      {selectedSettlement.txid}
+                    </div>
+                  </div>
+                </div>
+              </AlertDialogDescription>
+              <div className="flex justify-end pt-4">
+                <AlertDialogAction onClick={() => setSelectedSettlement(null)}>
+                  Close
+                </AlertDialogAction>
+              </div>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </CardContent>
     </Card>
   );
@@ -881,6 +1176,7 @@ function FundAddressSection() {
   const { toast } = useToast();
   const [amount, setAmount] = useState("");
   const [isFunding, setIsFunding] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [pendingTx, setPendingTx] = useState<{ txid: string; amount: string; id: string } | null>(null);
   const [confirmations, setConfirmations] = useState(0);
   const [isConfirmed, setIsConfirmed] = useState(false);
@@ -906,6 +1202,31 @@ function FundAddressSection() {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRefresh = async () => {
+    if (!wallet?.id) return;
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["/api/wallets", wallet.id, "transactions"] });
+      const response = await fetch(`/api/wallets/${wallet.id}`);
+      if (response.ok) {
+        const updatedWallet = await response.json();
+        setWallet(updatedWallet);
+      }
+      toast({
+        title: "Data Refreshed",
+        description: "Deposit data has been updated.",
+      });
+    } catch (error) {
+      toast({
+        title: "Refresh Failed",
+        description: "Could not refresh data.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Fetch wallet balance when modal opens
@@ -1038,18 +1359,28 @@ function FundAddressSection() {
 
   return (
     <>
-      <Card className={`h-full ${isDisabled ? "opacity-50" : ""}`}>
-        <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
-          <div>
-            <CardTitle className="text-lg">Fund ByteStream Wallet</CardTitle>
-            <CardDescription>Deposit BTC to your L2 wallet</CardDescription>
+      <Card className={`transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+        <CardHeader className="space-y-0 pb-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30 group-hover:shadow-green-500/50 transition-all duration-300 group-hover:scale-110">
+                <Zap className="w-5 h-5 text-white group-hover:animate-pulse" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Fund ByteStream Wallet</CardTitle>
+                <CardDescription>Deposit BTC to your L2 wallet</CardDescription>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={!wallet || isRefreshing}
+              className="h-8 w-8"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
-          <StepIndicator
-            step={2}
-            label="Fund"
-            active={!!wallet && !isConfirmed}
-            completed={isConfirmed}
-          />
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-2">
@@ -1302,15 +1633,62 @@ function FundAddressSection() {
 }
 
 function L2BalanceSection() {
-  const { wallet } = useWallet();
+  const { wallet, setWallet } = useWallet();
+  const { toast } = useToast();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const balance = wallet?.l2Balance || "0";
   const hasBalance = parseFloat(balance) > 0;
 
+  const handleRefresh = async () => {
+    if (!wallet?.id) return;
+    setIsRefreshing(true);
+    try {
+      const response = await fetch(`/api/wallets/${wallet.id}`);
+      if (response.ok) {
+        const updatedWallet = await response.json();
+        setWallet(updatedWallet);
+        toast({
+          title: "Balance Updated",
+          description: "Your L2 balance has been refreshed.",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Refresh Failed",
+        description: "Could not refresh balance.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
-    <Card className={`h-full ${!wallet ? "opacity-50" : ""}`}>
+    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${!wallet ? "opacity-50" : "hover:border-orange-500/30"} group`}>
       <CardHeader className="pb-4">
-        <CardTitle className="text-lg">L2 Balance</CardTitle>
-        <CardDescription>Your available balance for instant payments</CardDescription>
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:shadow-purple-500/50 transition-all duration-300 group-hover:scale-110">
+              <div className="relative">
+                <Bitcoin className="w-5 h-5 text-white" />
+                <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-orange-500 rounded-full group-hover:animate-ping" />
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-lg">L2 Balance</CardTitle>
+              <CardDescription>Your available balance for instant payments</CardDescription>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={!wallet || isRefreshing}
+            className="h-8 w-8"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="p-6 rounded-lg bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 text-center">
@@ -1340,9 +1718,52 @@ function MerchantPaymentSection() {
   const [merchantAmount, setMerchantAmount] = useState("");
   const [paymentCreated, setPaymentCreated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedCommitment, setSelectedCommitment] = useState<any>(null);
+  const [visibleCount, setVisibleCount] = useState(5);
 
   const balance = parseFloat(wallet?.l2Balance || "0");
   const isDisabled = !wallet || balance === 0;
+
+  const handleRefresh = async () => {
+    if (!wallet?.id) return;
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["/api/wallets/:walletId/l2-commitments", wallet.id] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/wallets", wallet.id] });
+      const response = await fetch(`/api/wallets/${wallet.id}`);
+      if (response.ok) {
+        const updatedWallet = await response.json();
+        setWallet(updatedWallet);
+      }
+      toast({
+        title: "Data Refreshed",
+        description: "Merchant payment data has been updated.",
+      });
+    } catch (error) {
+      toast({
+        title: "Refresh Failed",
+        description: "Could not refresh data.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Fetch L2 transaction history (commitments)
+  const { data: commitments, isLoading: isLoadingHistory } = useQuery({
+    queryKey: ["/api/wallets/:walletId/l2-commitments", wallet?.id],
+    queryFn: async () => {
+      if (!wallet?.id) return [];
+      const response = await fetch(`/api/wallets/${wallet.id}/l2-commitments`);
+      if (!response.ok) throw new Error("Failed to fetch L2 commitments");
+      return response.json();
+    },
+    enabled: !!wallet?.id,
+    refetchInterval: 10000, // Refetch every 10 seconds
+  });
 
   const handleCreatePayment = async () => {
     if (!wallet || !merchantAddress || !merchantAmount) {
@@ -1449,18 +1870,26 @@ function MerchantPaymentSection() {
   };
 
   return (
-    <Card className={`h-full ${isDisabled ? "opacity-50" : ""}`}>
+    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
-        <div>
-          <CardTitle className="text-lg">Merchant Payment</CardTitle>
-          <CardDescription>Send payment to a merchant address</CardDescription>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500 to-pink-600 flex items-center justify-center shadow-lg shadow-pink-500/30 group-hover:shadow-pink-500/50 transition-all duration-300 group-hover:scale-110">
+            <Store className="w-5 h-5 text-white group-hover:-translate-y-1 transition-transform duration-300" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Merchant Payment</CardTitle>
+            <CardDescription>Send payment to a merchant address</CardDescription>
+          </div>
         </div>
-        <StepIndicator
-          step={3}
-          label="Payment"
-          active={!!wallet && balance > 0 && !paymentCreated}
-          completed={paymentCreated}
-        />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowHistoryModal(true)}
+          disabled={!wallet}
+          className="text-xs"
+        >
+          History
+        </Button>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Settlement in Progress Warning */}
@@ -1578,6 +2007,167 @@ function MerchantPaymentSection() {
           </div>
         )}
       </CardContent>
+
+      {/* L2 Transaction History Modal */}
+      <AlertDialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
+        <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <AlertDialogTitle>L2 Transaction History</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-4 pt-4">
+              {isLoadingHistory ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : !commitments || commitments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No L2 transactions found
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {commitments.slice(0, visibleCount).map((commitment: any) => (
+                    <div 
+                      key={commitment.id} 
+                      className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/5 transition-colors cursor-pointer"
+                      onClick={() => setSelectedCommitment(commitment)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          commitment.settled === "true" 
+                            ? "bg-green-500/10"
+                            : "bg-blue-500/10"
+                        }`}>
+                          {commitment.settled === "true" ? (
+                            <Check className="w-5 h-5 text-green-600" />
+                          ) : (
+                            <Bitcoin className="w-5 h-5 text-blue-600" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">
+                            {new Date(commitment.createdAt).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                          <p className="text-xs text-muted-foreground font-mono">
+                            {commitment.merchantAddress.slice(0, 12)}...{commitment.merchantAddress.slice(-8)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono font-bold text-sm">
+                          {formatBTC(parseFloat(String(commitment.amount)))} BTC
+                        </p>
+                        <Badge variant={commitment.settled === "true" ? "default" : "outline"} className="mt-1">
+                          {commitment.settled === "true" ? "Settled" : "Pending"}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                  {commitments.length > visibleCount && (
+                    <Button 
+                      variant="outline" 
+                      className="w-full"
+                      onClick={() => setVisibleCount(prev => prev + 5)}
+                    >
+                      View More
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </AlertDialogDescription>
+          <div className="flex justify-end pt-4">
+            <AlertDialogAction onClick={() => setShowHistoryModal(false)}>
+              Close
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Commitment Details Dialog */}
+      {selectedCommitment && (
+        <AlertDialog open={!!selectedCommitment} onOpenChange={() => setSelectedCommitment(null)}>
+          <AlertDialogContent className="max-w-2xl">
+            <AlertDialogTitle>Transaction Details</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-4">
+                {/* Status */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Status</span>
+                  <Badge variant={selectedCommitment.settled === "true" ? "default" : "outline"}>
+                    {selectedCommitment.settled === "true" ? "Settled on L1" : "Pending Settlement"}
+                  </Badge>
+                </div>
+
+                {/* Amount */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Amount</span>
+                  <span className="font-mono font-bold text-green-600">
+                    {formatBTC(parseFloat(String(selectedCommitment.amount)))} BTC
+                  </span>
+                </div>
+
+                {/* Fee */}
+                {selectedCommitment.fee && (
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Transaction Fee</span>
+                    <span className="font-mono text-orange-600">
+                      {formatBTC(parseFloat(String(selectedCommitment.fee)))} BTC
+                    </span>
+                  </div>
+                )}
+
+                {/* Merchant Address */}
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <Label className="text-sm font-medium mb-2 block">Merchant Address</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs bg-background p-2 rounded break-all font-mono">
+                      {selectedCommitment.merchantAddress}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(selectedCommitment.merchantAddress);
+                        toast({
+                          title: "Copied",
+                          description: "Merchant address copied to clipboard",
+                        });
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Created Date */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="text-sm font-medium">Created</span>
+                  <span className="text-sm font-mono">
+                    {new Date(selectedCommitment.createdAt).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    })}
+                  </span>
+                </div>
+              </div>
+            </AlertDialogDescription>
+            <div className="flex justify-end pt-4">
+              <AlertDialogAction onClick={() => setSelectedCommitment(null)}>
+                Close
+              </AlertDialogAction>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </Card>
   );
 }
@@ -1610,7 +2200,7 @@ function SettlementHistorySection() {
 
   return (
     <>
-      <Card className="h-full">
+      <Card className="h-full transition-all duration-300 hover:shadow-lg border-muted/50 hover:border-orange-500/30">
         <CardHeader>
           <CardTitle className="text-lg">Settlement History</CardTitle>
           <CardDescription>Your L2 to L1 settlement transactions</CardDescription>
@@ -1840,7 +2430,7 @@ function TransactionHistorySection() {
 
   return (
     <>
-      <Card className="h-full">
+      <Card className="h-full transition-all duration-300 hover:shadow-lg border-muted/50 hover:border-orange-500/30">
         <CardHeader>
           <CardTitle className="text-lg">L2 Transaction History</CardTitle>
           <CardDescription>Your recent L2 payments</CardDescription>
@@ -2044,18 +2634,133 @@ function TransactionHistorySection() {
 }
 
 export default function Home() {
-  const { wallet, bitcoinAddress, error } = useWallet(); // Added bitcoinAddress and error from original
+  const { wallet, bitcoinAddress, publicKey, error, setWallet } = useWallet(); // Added bitcoinAddress and error from original
+  const { toast } = useToast();
+  const [isChecking, setIsChecking] = useState(false);
+
+  // Auto-create wallet when user connects
+  useEffect(() => {
+    async function checkOrCreateWallet() {
+      if (bitcoinAddress && !wallet && publicKey && !isChecking) {
+        setIsChecking(true);
+        try {
+          // First, check if wallet already exists
+          const response = await fetch(`/api/wallets/address/${bitcoinAddress}`);
+          if (response.ok) {
+            const existingWallet = await response.json();
+            if (existingWallet.taprootAddress) {
+              setWallet(existingWallet);
+              return;
+            }
+          }
+          
+          // Wallet doesn't exist, create it automatically
+          console.log("Creating new ByteStream wallet for", bitcoinAddress);
+          
+          // Create the wallet
+          const walletResponse = await apiRequest("POST", "/api/wallets", {
+            bitcoinAddress: bitcoinAddress,
+          });
+          const newWallet = await walletResponse.json();
+
+          // Generate Taproot address
+          const taprootResponse = await apiRequest("POST", `/api/wallets/${newWallet.id}/generate-taproot`, {
+            userPublicKey: publicKey,
+          });
+          const walletWithTaproot = await taprootResponse.json();
+          
+          setWallet(walletWithTaproot);
+          toast({
+            title: "ByteStream Wallet Created",
+            description: "Your wallet has been automatically generated and is ready to use.",
+          });
+        } catch (error) {
+          console.error("Error checking/creating wallet:", error);
+          // Silently fail - user can manually generate if needed
+        } finally {
+          setIsChecking(false);
+        }
+      }
+    }
+    checkOrCreateWallet();
+  }, [bitcoinAddress, publicKey, wallet, setWallet, isChecking, toast]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-orange-500/5 relative overflow-hidden">
+      {/* Animated Bitcoin background pattern */}
+      <div className="absolute inset-0 pointer-events-none opacity-[0.02]">
+        <div className="absolute top-20 left-10 animate-float-slow">
+          <Bitcoin className="w-32 h-32 text-orange-500" />
+        </div>
+        <div className="absolute top-40 right-20 animate-float-slower">
+          <Bitcoin className="w-24 h-24 text-orange-500" />
+        </div>
+        <div className="absolute bottom-40 left-1/4 animate-float-slow" style={{ animationDelay: '2s' }}>
+          <Bitcoin className="w-28 h-28 text-orange-500" />
+        </div>
+        <div className="absolute bottom-20 right-1/3 animate-float-slower" style={{ animationDelay: '1s' }}>
+          <Bitcoin className="w-36 h-36 text-orange-500" />
+        </div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-float-slow" style={{ animationDelay: '3s' }}>
+          <Bitcoin className="w-40 h-40 text-orange-500" />
+        </div>
+      </div>
       <Header />
 
-      <main className="max-w-4xl mx-auto px-6 pt-24 space-y-8">
-        <div className="space-y-2 text-center">
-          <h1 className="text-3xl font-bold tracking-tight">Bitcoin L2 Wallet</h1>
-          <p className="text-muted-foreground">
-            Generate a Taproot address, fund it, and make instant L2 payments.
+      <main className="max-w-none px-0 pt-24 space-y-8">
+        <div className="space-y-4 text-center mb-12 px-4">
+          <div className="inline-block animate-fade-in">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500/10 border border-orange-500/20 mb-4">
+              <Zap className="w-4 h-4 text-orange-500" />
+              <span className="text-sm font-medium text-orange-500">Lightning-Fast Bitcoin L2 Payments</span>
+            </div>
+          </div>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+            Bitcoin Payment Layer
+          </h1>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            Fund it, and start making payments in seconds.
           </p>
+          
+          {/* Display wallet address if available */}
+          {(bitcoinAddress && (!wallet || !wallet.taprootAddress)) ? (
+            <div className="mt-6 max-w-lg mx-auto">
+              <div className="p-4 rounded-lg bg-orange-500/5 border border-orange-500/20 min-h-[80px] flex flex-col items-center justify-center">
+                <p className="text-xs text-muted-foreground mb-2">Your ByteStream Wallet Address</p>
+                <div className="flex flex-col items-center justify-center w-full py-2">
+                  <span className="relative flex h-10 w-10 items-center justify-center">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80 z-0 border-2 border-orange-500"></span>
+                    <span className="relative inline-flex rounded-full h-10 w-10 bg-white border-2 border-orange-500 items-center justify-center z-10">
+                      <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
+                    </span>
+                  </span>
+                  <span className="text-sm font-semibold text-orange-600 dark:text-orange-400 mt-2">Loading address...</span>
+                </div>
+              </div>
+            </div>
+          ) : (wallet && wallet.taprootAddress) ? (
+            <div className="mt-6 max-w-lg mx-auto">
+              <div className="p-4 rounded-lg bg-orange-500/5 border border-orange-500/20 min-h-[80px] flex flex-col items-center justify-center">
+                <p className="text-xs text-muted-foreground mb-2">Your ByteStream Wallet Address</p>
+                <div className="flex items-center gap-2 justify-center w-full">
+                  <code className="text-sm font-mono text-foreground break-all">{wallet.taprootAddress}</code>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      navigator.clipboard.writeText(wallet.taprootAddress);
+                      toast({
+                        title: "Address Copied",
+                        description: "Taproot address copied to clipboard",
+                      });
+                    }}
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {error && ( // Kept error display from original
@@ -2073,32 +2778,26 @@ export default function Home() {
               </div>
               <h2 className="text-lg font-semibold mb-2">Connect Your Wallet</h2>
               <p className="text-sm text-muted-foreground mb-3 max-w-md mx-auto">
-                Connect your Unisat wallet to get started with ByteStream L2 payments.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Unisat wallet extension required
+                Connect your wallet to get started with ByteStream L2 payments.
               </p>
             </CardContent>
           </Card>
         )}
 
-        <div className="grid gap-24 md:grid-cols-[1fr_400px]">
-          <div className="space-y-8 flex flex-col">
-            <GenerateWalletSection />
-            <FundAddressSection />
-            <L2SettlementSection />
-            <SettlementHistorySection />
-          </div>
-
-          <div className="space-y-8 flex flex-col">
+        <div className="grid gap-9 md:gap-14 lg:gap-18 md:grid-cols-[510px_510px] px-4 justify-center">
+          <div className="space-y-8 flex flex-col pl-0 max-w-[510px]">
             <L2BalanceSection />
             <MerchantPaymentSection />
-            <TransactionHistorySection />
+          </div>
+
+          <div className="space-y-8 flex flex-col max-w-[510px]">
+            <FundAddressSection />
+            <L2SettlementSection />
           </div>
         </div>
 
         {/* Why ByteStream L2 Section */}
-        <div className="space-y-6 py-8 mt-16">
+        <div className="space-y-6 py-8 mt-16 max-w-5xl mx-auto">
           <div className="text-center space-y-2">
             <h2 className="text-2xl font-bold">Why ByteStream L2?</h2>
             <p className="text-muted-foreground">Fast, secure, and cost effective Bitcoin payments</p>
@@ -2144,7 +2843,7 @@ export default function Home() {
         </div>
 
         {/* How It Works Section */}
-        <div className="space-y-6 py-8">
+        <div className="space-y-6 py-8 max-w-5xl mx-auto">
           <div className="text-center space-y-2">
             <h2 className="text-2xl font-bold">How It Works</h2>
             <p className="text-muted-foreground">Get started with ByteStream in four simple steps</p>
@@ -2196,7 +2895,7 @@ export default function Home() {
       </main>
 
       {/* Footer Section */}
-      <footer className="mt-16 bg-[#1a1d29] border-t border-gray-800">
+      <footer className="mt-16 bg-[#1a1d29]/95 backdrop-blur-md border-t border-gray-800/50 shadow-2xl">
         <div className="px-3 md:px-6 py-12">
           <div className="grid gap-12 md:grid-cols-4">
             {/* ByteStream Info */}

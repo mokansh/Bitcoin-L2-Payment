@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useFundingAuth } from "@/hooks/use-funding-auth";
 import type { Wallet, Merchant, Transaction } from "@shared/schema";
 import {
   Wallet as WalletIcon,
@@ -49,7 +50,9 @@ const toHex = (value: string) =>
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
-function Header() {
+type Section = 'home' | 'fund' | 'merchant' | 'settle';
+
+function Header({ activeSection, onNavigate }: { activeSection: Section; onNavigate: (section: Section) => void }) {
   const { bitcoinAddress, isConnecting, connectWallet, disconnectWallet } = useWallet();
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -87,40 +90,49 @@ function Header() {
     <header className="fixed top-0 left-0 right-0 h-20 bg-gradient-to-br from-background via-background to-orange-500/5 backdrop-blur-md border-b border-gray-800/50 z-50 shadow-lg">
       <div className="w-full h-full px-6 md:px-16 lg:px-24 flex items-center justify-between gap-2 md:gap-4">
         {/* Logo - Extreme Left */}
-        <div className="flex items-center gap-2 px-3 md:px-6 group">
+        <button 
+          onClick={() => onNavigate('home')}
+          className="flex items-center gap-2 px-3 md:px-6 group cursor-pointer hover:opacity-90 transition-opacity"
+        >
           <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/20 group-hover:shadow-orange-500/40 transition-all duration-300">
             <Bitcoin className="w-4 h-4 md:w-5 md:h-5 text-white group-hover:rotate-12 transition-transform duration-300" />
           </div>
           <span className="text-xl md:text-2xl lg:text-3xl font-bold text-white bg-gradient-to-r from-white to-gray-300 bg-clip-text">ByteStream</span>
-        </div>
+        </button>
         
-        {/* Navigation - Center - Hidden on mobile */}
-        {/* <nav className="hidden lg:flex absolute left-1/2 transform -translate-x-1/2 items-center gap-6">
-          <button
-            onClick={() => window.location.href = '/'}
-            className="text-sm font-medium text-white hover:text-orange-500 transition-colors"
+        {/* Navigation - Center */}
+        <nav className="hidden md:flex absolute left-1/2 transform -translate-x-1/2 items-center gap-2">
+          <Button
+            variant={activeSection === 'fund' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => bitcoinAddress && onNavigate('fund')}
+            disabled={!bitcoinAddress}
+            className={`text-base ${activeSection === 'fund' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            Home
-          </button>
-          <button
-            onClick={() => toast({
-              title: "Coming Soon",
-              description: "Dashboard feature is under development.",
-            })}
-            className="text-sm font-medium text-gray-400 hover:text-orange-500 transition-colors"
+            <Zap className="w-4 h-4 mr-1.5" />
+            Fund Wallet
+          </Button>
+          <Button
+            variant={activeSection === 'merchant' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => bitcoinAddress && onNavigate('merchant')}
+            disabled={!bitcoinAddress}
+            className={`text-base ${activeSection === 'merchant' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            Dashboard
-          </button>
-          <button
-            onClick={() => toast({
-              title: "Coming Soon",
-              description: "Reports feature is under development.",
-            })}
-            className="text-sm font-medium text-gray-400 hover:text-orange-500 transition-colors"
+            <Store className="w-4 h-4 mr-1.5" />
+            Merchant Payment
+          </Button>
+          <Button
+            variant={activeSection === 'settle' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => bitcoinAddress && onNavigate('settle')}
+            disabled={!bitcoinAddress}
+            className={`text-base ${activeSection === 'settle' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            Reports
-          </button>
-        </nav> */}
+            <Bitcoin className="w-4 h-4 mr-1.5" />
+            Settle to L1
+          </Button>
+        </nav>
 
         {/* Buttons - Extreme Right */}
         <div className="flex items-center gap-2 md:gap-3 px-3 md:px-6">
@@ -142,22 +154,22 @@ function Header() {
             <>
               <button
                 onClick={handleCopy}
-                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-gray-800/50 hover:bg-gray-700 transition-all duration-200 text-gray-300 border border-gray-700/50 hover:border-gray-600 backdrop-blur-sm"
+                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-gray-800/50 hover:bg-gray-700 transition-all duration-200 text-gray-300 border border-gray-700/50 hover:border-orange-500/50 backdrop-blur-sm group"
                 data-testid="button-copy-address"
               >
-                <WalletIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                <WalletIcon className="w-3.5 h-3.5 md:w-4 md:h-4 group-hover:text-orange-500 transition-colors" />
                 <span className="font-mono text-xs md:text-sm">{formatAddress(bitcoinAddress)}</span>
                 {copied ? (
                   <Check className="w-3.5 h-3.5 md:w-4 md:h-4 text-green-500" />
                 ) : (
-                  <Copy className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                  <Copy className="w-3.5 h-3.5 md:w-4 md:h-4 group-hover:text-orange-500 transition-colors" />
                 )}
               </button>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={disconnectWallet}
-                className="border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white text-xs md:text-sm h-8 md:h-9"
+                className="border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-red-500/50 text-xs md:text-sm h-8 md:h-9 transition-all duration-200"
                 data-testid="button-disconnect"
               >
                 Disconnect
@@ -167,7 +179,7 @@ function Header() {
             <Button
               onClick={connectWallet}
               disabled={isConnecting}
-              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs md:text-sm h-8 md:h-9 px-2 md:px-4 shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transition-all duration-300"
+              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs md:text-sm h-8 md:h-9 px-2 md:px-4 shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 hover:scale-105 transition-all duration-300"
               data-testid="button-connect-wallet"
             >
               {isConnecting ? (
@@ -616,7 +628,7 @@ function L2SettlementSection() {
   };
 
   return (
-    <Card className={`transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+    <Card className={`max-w-[480px] w-full mx-auto transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
       <CardHeader className="space-y-0 pb-4">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -1172,42 +1184,12 @@ function L2SettlementSection() {
 }
 
 function FundAddressSection() {
-    // Auth state for funding
-    const [isFundingEnabled, setIsFundingEnabled] = useState(false);
-    const [isEnablingFunding, setIsEnablingFunding] = useState(false);
-    // Check if already enabled (optional: persist in session/localStorage)
-    useEffect(() => {
-      if (window.sessionStorage.getItem('isFundingEnabled') === 'true') {
-        setIsFundingEnabled(true);
-      }
-    }, []);
-
-    const handleEnableFunding = async () => {
-      if (!bitcoinAddress || !window.unisat) return;
-      setIsEnablingFunding(true);
-      try {
-        const message = `Enable funding for ${bitcoinAddress} at ${new Date().toISOString()}`;
-        const signature = await window.unisat.signMessage(message);
-        const res = await fetch('/api/auth/verify-signature', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address: bitcoinAddress, message, signature })
-        });
-        if (res.ok) {
-          setIsFundingEnabled(true);
-          window.sessionStorage.setItem('isFundingEnabled', 'true');
-          toast({ title: 'Funding Enabled', description: 'You can now fund your ByteStream wallet.' });
-        } else {
-          toast({ title: 'Auth Failed', description: 'Signature verification failed.', variant: 'destructive' });
-        }
-      } catch (e) {
-        toast({ title: 'Signature Error', description: 'Could not sign message.', variant: 'destructive' });
-      } finally {
-        setIsEnablingFunding(false);
-      }
-    };
+  // Context and hooks
   const { wallet, addTransaction, updateTransaction, setWallet, bitcoinAddress } = useWallet();
   const { toast } = useToast();
+  const { isFundingEnabled, isEnablingFunding, enableFunding } = useFundingAuth(bitcoinAddress);
+  
+  // Funding state
   const [amount, setAmount] = useState("");
   const [isFunding, setIsFunding] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1393,7 +1375,7 @@ function FundAddressSection() {
 
   return (
     <>
-      <Card className={`transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+      <Card className={`max-w-[480px] w-full mx-auto transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
         <CardHeader className="space-y-0 pb-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -1417,12 +1399,12 @@ function FundAddressSection() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
             {!isFundingEnabled ? (
               <Button
-                onClick={handleEnableFunding}
+                onClick={enableFunding}
                 disabled={isDisabled || isEnablingFunding || wallet?.settlementInProgress === "true"}
-                className="flex-1"
+                className="w-full"
                 data-testid="button-enable-funding"
               >
                 {isEnablingFunding ? (
@@ -1435,24 +1417,26 @@ function FundAddressSection() {
                 )}
               </Button>
             ) : (
-              <Button
-                onClick={() => setShowFundModal(true)}
-                disabled={isDisabled || wallet?.settlementInProgress === "true"}
-                className="flex-1"
-                data-testid="button-fund-wallet"
-              >
-                <Bitcoin className="w-4 h-4 mr-2" />
-                Fund ByteStream Wallet
-              </Button>
+              <>
+                <Button
+                  onClick={() => setShowFundModal(true)}
+                  disabled={isDisabled || wallet?.settlementInProgress === "true"}
+                  className="w-full"
+                  data-testid="button-fund-wallet"
+                >
+                  <Bitcoin className="w-4 h-4 mr-2" />
+                  Fund ByteStream Wallet
+                </Button>
+                <Button
+                  onClick={() => setShowHistoryModal(true)}
+                  disabled={isDisabled || wallet?.settlementInProgress === "true"}
+                  variant="outline"
+                  className="w-full"
+                >
+                  View Deposit History
+                </Button>
+              </>
             )}
-            <Button
-              onClick={() => setShowHistoryModal(true)}
-              disabled={isDisabled || wallet?.settlementInProgress === "true"}
-              variant="outline"
-              className="flex-1"
-            >
-              View Deposit History
-            </Button>
           </div>
 
         {pendingTx && (
@@ -1685,11 +1669,12 @@ function FundAddressSection() {
 }
 
 function L2BalanceSection() {
-  const { wallet, setWallet } = useWallet();
+  const { wallet, setWallet, bitcoinAddress } = useWallet();
   const { toast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const balance = wallet?.l2Balance || "0";
   const hasBalance = parseFloat(balance) > 0;
+  const isLoadingWallet = bitcoinAddress && (!wallet || !wallet.taprootAddress);
 
   const handleRefresh = async () => {
     if (!wallet?.id) return;
@@ -1716,47 +1701,113 @@ function L2BalanceSection() {
   };
 
   return (
-    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${!wallet ? "opacity-50" : "hover:border-orange-500/30"} group`}>
-      <CardHeader className="pb-4">
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:shadow-purple-500/50 transition-all duration-300 group-hover:scale-110">
-              <div className="relative">
-                <Bitcoin className="w-5 h-5 text-white" />
-                <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-orange-500 rounded-full group-hover:animate-ping" />
-              </div>
+    <Card className={`max-w-[480px] w-full mx-auto transition-all duration-300 hover:shadow-2xl border-border/50 ${!wallet ? "opacity-50" : "hover:border-orange-500/30"} backdrop-blur-sm bg-card/90`}>
+      <CardHeader className="pb-3 border-b border-border/50">
+        <div className="flex items-center justify-center">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+              <Zap className="w-7 h-7 text-white" />
             </div>
-            <div>
-              <CardTitle className="text-lg">L2 Balance</CardTitle>
-              <CardDescription>Your available balance for instant payments</CardDescription>
+            <div className="text-center">
+              <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent">
+                Bitcoin Payment Layer
+              </h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Fund your wallet, and start making payments in seconds.
+              </p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleRefresh}
-            disabled={!wallet || isRefreshing}
-            className="h-8 w-8"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="p-6 rounded-lg bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 text-center">
-          <div className="text-4xl font-bold tracking-tight" data-testid="text-l2-balance">
-            {formatBTC(balance)} <span className="text-xl font-medium text-muted-foreground">BTC</span>
+      
+      <CardContent className="pt-8 pb-6 space-y-6">
+        {/* Address Section */}
+        {isLoadingWallet ? (
+          <div className="p-5 rounded-xl bg-background/60 border border-border/50">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Your Payment Address
+              </div>
+            </div>
+            <div className="w-full flex flex-col items-center justify-center py-8">
+              <span className="relative flex h-14 w-14 items-center justify-center">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80 z-0 border-2 border-orange-500"></span>
+                <span className="relative inline-flex rounded-full h-14 w-14 bg-white border-2 border-orange-500 items-center justify-center z-10">
+                  <Loader2 className="w-7 h-7 text-orange-500 animate-spin" />
+                </span>
+              </span>
+              <span className="text-base font-semibold text-orange-600 dark:text-orange-400 mt-4">Generating your ByteStream wallet...</span>
+              <span className="text-sm text-muted-foreground mt-1">This may take a few seconds.</span>
+            </div>
           </div>
+        ) : wallet?.taprootAddress ? (
+          <div className="p-5 rounded-xl bg-background/60 border border-border/50">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Your Payment Address
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 p-4 rounded-lg bg-card/80 border border-border/30 hover:border-orange-500/30 transition-all">
+              <code className="text-sm font-mono text-foreground/80 break-all flex-grow">
+                {wallet.taprootAddress}
+              </code>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="flex-shrink-0 h-11 w-11 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 text-orange-500 transition-all hover:scale-105"
+                onClick={() => {
+                  navigator.clipboard.writeText(wallet.taprootAddress);
+                  toast({
+                    title: "Address Copied",
+                    description: "Your payment address has been copied to clipboard",
+                  });
+                }}
+              >
+                <Copy className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Balance Display */}
+        <div className="text-center py-4">
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <WalletIcon className="w-5 h-5 text-orange-500" />
+            <span className="text-base text-muted-foreground font-medium">L2 Balance</span>
+          </div>
+          <div className="text-5xl font-bold tracking-tight mb-2">
+            <span className="bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent" data-testid="text-l2-balance">
+              {formatBTC(balance)}
+            </span>
+            <span className="text-xl font-semibold text-muted-foreground ml-2">BTC</span>
+          </div>
+          
           {hasBalance && (
-            <p className="mt-2 text-sm text-muted-foreground">
+            <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 font-semibold text-sm mt-4">
+              <Check className="w-4 h-4" />
               Ready for instant L2 payments
-            </p>
+            </div>
           )}
           {!hasBalance && wallet && (
-            <p className="mt-2 text-sm text-muted-foreground">
+            <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-muted/50 text-muted-foreground font-medium text-sm mt-4">
+              <AlertCircle className="w-4 h-4" />
               Fund your wallet to get started
-            </p>
+            </div>
           )}
+        </div>
+        
+        {/* Refresh Button */}
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={!wallet || isRefreshing}
+            className="gap-2 border-border/50 hover:border-orange-500/50 hover:bg-orange-500/5"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh Balance
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -1922,7 +1973,7 @@ function MerchantPaymentSection() {
   };
 
   return (
-    <Card className={`h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
+    <Card className={`max-w-[480px] w-full mx-auto h-full transition-all duration-300 hover:shadow-lg border-muted/50 ${isDisabled ? "opacity-50" : "hover:border-orange-500/30"} group`}>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500 to-pink-600 flex items-center justify-center shadow-lg shadow-pink-500/30 group-hover:shadow-pink-500/50 transition-all duration-300 group-hover:scale-110">
@@ -2689,6 +2740,14 @@ export default function Home() {
   const { wallet, bitcoinAddress, publicKey, error, setWallet } = useWallet(); // Added bitcoinAddress and error from original
   const { toast } = useToast();
   const [isChecking, setIsChecking] = useState(false);
+  const [activeSection, setActiveSection] = useState<Section>('home');
+
+  // Redirect to home when wallet is disconnected
+  useEffect(() => {
+    if (!bitcoinAddress && activeSection !== 'home') {
+      setActiveSection('home');
+    }
+  }, [bitcoinAddress, activeSection]);
 
   // Auto-create wallet when user connects
   useEffect(() => {
@@ -2757,95 +2816,75 @@ export default function Home() {
           <Bitcoin className="w-40 h-40 text-orange-500" />
         </div>
       </div>
-      <Header />
+      <Header activeSection={activeSection} onNavigate={setActiveSection} />
 
-      <main className="max-w-none px-0 pt-24 space-y-8">
-        <div className="space-y-4 text-center mb-12 px-4">
-          <div className="inline-block animate-fade-in">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500/10 border border-orange-500/20 mb-4">
-              <Zap className="w-4 h-4 text-orange-500" />
-              <span className="text-sm font-medium text-orange-500">Lightning-Fast Bitcoin L2 Payments</span>
-            </div>
-          </div>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-            Bitcoin Payment Layer
-          </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Fund it, and start making payments in seconds.
-          </p>
-          
-          {/* Display wallet address if available */}
-          {(bitcoinAddress && (!wallet || !wallet.taprootAddress)) ? (
-            <div className="mt-6 max-w-lg mx-auto">
-              <div className="p-4 rounded-lg bg-orange-500/5 border border-orange-500/20 min-h-[80px] flex flex-col items-center justify-center">
-                <p className="text-xs text-muted-foreground mb-2">Your ByteStream Wallet Address</p>
-                <div className="flex flex-col items-center justify-center w-full py-2">
-                  <span className="relative flex h-10 w-10 items-center justify-center">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80 z-0 border-2 border-orange-500"></span>
-                    <span className="relative inline-flex rounded-full h-10 w-10 bg-white border-2 border-orange-500 items-center justify-center z-10">
-                      <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
-                    </span>
-                  </span>
-                  <span className="text-sm font-semibold text-orange-600 dark:text-orange-400 mt-2">Loading address...</span>
-                </div>
+      <main className="max-w-none px-0 pt-28 pb-16 space-y-12">
+        {/* Only show hero section when on home and not connected */}
+        {activeSection === 'home' && !bitcoinAddress && (
+          <div className="space-y-6 text-center mb-12 px-4 animate-fade-in">
+            <div className="inline-block">
+              <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-orange-500/10 border border-orange-500/20 mb-6">
+                <Zap className="w-4 h-4 text-orange-500" />
+                <span className="text-sm font-semibold text-orange-500">Lightning-Fast Bitcoin L2 Payments</span>
               </div>
             </div>
-          ) : (wallet && wallet.taprootAddress) ? (
-            <div className="mt-6 max-w-lg mx-auto">
-              <div className="p-4 rounded-lg bg-orange-500/5 border border-orange-500/20 min-h-[80px] flex flex-col items-center justify-center">
-                <p className="text-xs text-muted-foreground mb-2">Your ByteStream Wallet Address</p>
-                <div className="flex items-center gap-2 justify-center w-full">
-                  <code className="text-sm font-mono text-foreground break-all">{wallet.taprootAddress}</code>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      navigator.clipboard.writeText(wallet.taprootAddress);
-                      toast({
-                        title: "Address Copied",
-                        description: "Taproot address copied to clipboard",
-                      });
-                    }}
-                  >
-                    <Copy className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        {error && ( // Kept error display from original
-          <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
+            <h1 className="text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              Bitcoin Payment Layer
+            </h1>
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+              Fund it, and start making payments in seconds.
+            </p>
           </div>
         )}
 
-        {!bitcoinAddress && ( // Kept connect wallet card from original
-          <Card className="mb-8 border-primary/20 bg-primary/5 max-w-xl mx-auto">
-            <CardContent className="py-6 text-center">
-              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-primary/10 flex items-center justify-center">
-                <WalletIcon className="w-6 h-6 text-primary" />
+        {error && (
+          <div className="max-w-2xl mx-auto px-4">
+            <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-center gap-3 animate-fade-in">
+              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+              <p className="text-sm text-destructive">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {!bitcoinAddress && (
+          <Card className="mb-8 border-orange-500/20 bg-orange-500/5 max-w-xl mx-auto shadow-lg hover:shadow-xl transition-shadow animate-fade-in">
+            <CardContent className="py-8 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                <WalletIcon className="w-8 h-8 text-white" />
               </div>
-              <h2 className="text-lg font-semibold mb-2">Connect Your Wallet</h2>
-              <p className="text-sm text-muted-foreground mb-3 max-w-md mx-auto">
-                Connect your wallet to get started with ByteStream L2 payments.
+              <h2 className="text-2xl font-bold mb-3">Connect Your Wallet</h2>
+              <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+                Connect your Bitcoin wallet to get started with instant L2 payments on ByteStream.
               </p>
             </CardContent>
           </Card>
         )}
 
-        <div className="grid gap-9 md:gap-14 lg:gap-18 md:grid-cols-[510px_510px] px-4 justify-center">
-          <div className="space-y-8 flex flex-col pl-0 max-w-[510px]">
-            <L2BalanceSection />
-            <MerchantPaymentSection />
-          </div>
+        {/* Conditional Section Rendering */}
+        <div className="max-w-3xl mx-auto px-4">
+          {activeSection === 'home' && bitcoinAddress && (
+            <div className="flex justify-center">
+              <L2BalanceSection />
+            </div>
+          )}
 
-          <div className="space-y-8 flex flex-col max-w-[510px]">
-            <FundAddressSection />
-            <L2SettlementSection />
-          </div>
+          {activeSection === 'fund' && (
+            <div className="animate-fade-in pt-24">
+              <FundAddressSection />
+            </div>
+          )}
+
+          {activeSection === 'merchant' && (
+            <div className="animate-fade-in pt-24">
+              <MerchantPaymentSection />
+            </div>
+          )}
+
+          {activeSection === 'settle' && (
+            <div className="animate-fade-in pt-24">
+              <L2SettlementSection />
+            </div>
+          )}
         </div>
 
         {/* Why ByteStream L2 Section */}

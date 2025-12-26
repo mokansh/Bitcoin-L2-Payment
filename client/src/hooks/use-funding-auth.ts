@@ -1,17 +1,50 @@
 import { useState, useEffect } from 'react';
 import { useToast } from './use-toast';
 
+const FUNDING_AUTH_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+
 export function useFundingAuth(bitcoinAddress: string | null) {
   const { toast } = useToast();
   const [isFundingEnabled, setIsFundingEnabled] = useState(false);
   const [isEnablingFunding, setIsEnablingFunding] = useState(false);
 
-  // Check if funding is already enabled from session
+  // Check if funding is already enabled from session and not expired
   useEffect(() => {
-    if (window.sessionStorage.getItem('isFundingEnabled') === 'true') {
-      setIsFundingEnabled(true);
-    }
-  }, []);
+    const checkFundingAuth = () => {
+      const enabledTimestamp = window.sessionStorage.getItem('fundingEnabledAt');
+      const isEnabled = window.sessionStorage.getItem('isFundingEnabled') === 'true';
+      
+      if (isEnabled && enabledTimestamp) {
+        const elapsedTime = Date.now() - parseInt(enabledTimestamp, 10);
+        
+        if (elapsedTime < FUNDING_AUTH_DURATION) {
+          setIsFundingEnabled(true);
+          
+          // Set a timeout to disable funding when session expires
+          const remainingTime = FUNDING_AUTH_DURATION - elapsedTime;
+          const timeoutId = setTimeout(() => {
+            setIsFundingEnabled(false);
+            window.sessionStorage.removeItem('isFundingEnabled');
+            window.sessionStorage.removeItem('fundingEnabledAt');
+            toast({
+              title: 'Funding Session Expired',
+              description: 'Please enable funding again to continue.',
+              variant: 'default'
+            });
+          }, remainingTime);
+          
+          return () => clearTimeout(timeoutId);
+        } else {
+          // Session expired, clear storage
+          window.sessionStorage.removeItem('isFundingEnabled');
+          window.sessionStorage.removeItem('fundingEnabledAt');
+          setIsFundingEnabled(false);
+        }
+      }
+    };
+    
+    checkFundingAuth();
+  }, [toast]);
 
   const enableFunding = async () => {
     if (!bitcoinAddress || !window.unisat) {
@@ -35,12 +68,27 @@ export function useFundingAuth(bitcoinAddress: string | null) {
       });
 
       if (res.ok) {
+        const timestamp = Date.now().toString();
         setIsFundingEnabled(true);
         window.sessionStorage.setItem('isFundingEnabled', 'true');
+        window.sessionStorage.setItem('fundingEnabledAt', timestamp);
+        
         toast({
           title: 'Funding Enabled',
-          description: 'You can now fund your ByteStream wallet.'
+          description: 'You can now fund your ByteStream wallet for the next 5 minutes.'
         });
+        
+        // Auto-disable after 5 minutes
+        setTimeout(() => {
+          setIsFundingEnabled(false);
+          window.sessionStorage.removeItem('isFundingEnabled');
+          window.sessionStorage.removeItem('fundingEnabledAt');
+          toast({
+            title: 'Funding Session Expired',
+            description: 'Please enable funding again to continue.',
+            variant: 'default'
+          });
+        }, FUNDING_AUTH_DURATION);
       } else {
         toast({
           title: 'Authentication Failed',

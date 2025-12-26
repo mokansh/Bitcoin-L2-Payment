@@ -1172,6 +1172,40 @@ function L2SettlementSection() {
 }
 
 function FundAddressSection() {
+    // Auth state for funding
+    const [isFundingEnabled, setIsFundingEnabled] = useState(false);
+    const [isEnablingFunding, setIsEnablingFunding] = useState(false);
+    // Check if already enabled (optional: persist in session/localStorage)
+    useEffect(() => {
+      if (window.sessionStorage.getItem('isFundingEnabled') === 'true') {
+        setIsFundingEnabled(true);
+      }
+    }, []);
+
+    const handleEnableFunding = async () => {
+      if (!bitcoinAddress || !window.unisat) return;
+      setIsEnablingFunding(true);
+      try {
+        const message = `Enable funding for ${bitcoinAddress} at ${new Date().toISOString()}`;
+        const signature = await window.unisat.signMessage(message);
+        const res = await fetch('/api/auth/verify-signature', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: bitcoinAddress, message, signature })
+        });
+        if (res.ok) {
+          setIsFundingEnabled(true);
+          window.sessionStorage.setItem('isFundingEnabled', 'true');
+          toast({ title: 'Funding Enabled', description: 'You can now fund your ByteStream wallet.' });
+        } else {
+          toast({ title: 'Auth Failed', description: 'Signature verification failed.', variant: 'destructive' });
+        }
+      } catch (e) {
+        toast({ title: 'Signature Error', description: 'Could not sign message.', variant: 'destructive' });
+      } finally {
+        setIsEnablingFunding(false);
+      }
+    };
   const { wallet, addTransaction, updateTransaction, setWallet, bitcoinAddress } = useWallet();
   const { toast } = useToast();
   const [amount, setAmount] = useState("");
@@ -1384,15 +1418,33 @@ function FundAddressSection() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-2">
-            <Button
-              onClick={() => setShowFundModal(true)}
-              disabled={isDisabled || wallet?.settlementInProgress === "true"}
-              className="flex-1"
-              data-testid="button-fund-wallet"
-            >
-              <Bitcoin className="w-4 h-4 mr-2" />
-              Fund ByteStream Wallet
-            </Button>
+            {!isFundingEnabled ? (
+              <Button
+                onClick={handleEnableFunding}
+                disabled={isDisabled || isEnablingFunding || wallet?.settlementInProgress === "true"}
+                className="flex-1"
+                data-testid="button-enable-funding"
+              >
+                {isEnablingFunding ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Enabling...
+                  </>
+                ) : (
+                  <>Enable Funding</>
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => setShowFundModal(true)}
+                disabled={isDisabled || wallet?.settlementInProgress === "true"}
+                className="flex-1"
+                data-testid="button-fund-wallet"
+              >
+                <Bitcoin className="w-4 h-4 mr-2" />
+                Fund ByteStream Wallet
+              </Button>
+            )}
             <Button
               onClick={() => setShowHistoryModal(true)}
               disabled={isDisabled || wallet?.settlementInProgress === "true"}

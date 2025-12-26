@@ -2,6 +2,11 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes, checkAllPendingSettlements } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import express, { type Request, Response, NextFunction } from "express";
+import { registerRoutes, checkAllPendingSettlements } from "./routes";
+import { serveStatic } from "./static";
+import { createServer } from "http";
+import authRouter from './auth';
 
 const app = express();
 const httpServer = createServer(app);
@@ -98,4 +103,5 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+  app.use('/api/auth', authRouter);
 })();

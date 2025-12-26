@@ -87,7 +87,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 h-20 bg-gradient-to-br from-background via-background to-orange-500/5 backdrop-blur-md border-b border-gray-800/50 z-50 shadow-lg">
+    <header className="fixed top-0 left-0 right-0 h-20 bg-gradient-to-br from-background via-background to-orange-500/5 backdrop-blur-md border-b border-border/50 z-50 shadow-lg">
       <div className="w-full h-full px-6 md:px-16 lg:px-24 flex items-center justify-between gap-2 md:gap-4">
         {/* Logo - Extreme Left */}
         <button 
@@ -97,7 +97,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
           <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/20 group-hover:shadow-orange-500/40 transition-all duration-300">
             <Bitcoin className="w-4 h-4 md:w-5 md:h-5 text-white group-hover:rotate-12 transition-transform duration-300" />
           </div>
-          <span className="text-xl md:text-2xl lg:text-3xl font-bold text-white bg-gradient-to-r from-white to-gray-300 bg-clip-text">ByteStream</span>
+          <span className="text-xl md:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">ByteStream</span>
         </button>
         
         {/* Navigation - Center */}
@@ -107,7 +107,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             size="sm"
             onClick={() => bitcoinAddress && onNavigate('fund')}
             disabled={!bitcoinAddress}
-            className={`text-base ${activeSection === 'fund' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`text-base ${activeSection === 'fund' ? 'bg-orange-500 hover:bg-orange-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Zap className="w-4 h-4 mr-1.5" />
             Fund Wallet
@@ -117,7 +117,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             size="sm"
             onClick={() => bitcoinAddress && onNavigate('merchant')}
             disabled={!bitcoinAddress}
-            className={`text-base ${activeSection === 'merchant' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`text-base ${activeSection === 'merchant' ? 'bg-orange-500 hover:bg-orange-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Store className="w-4 h-4 mr-1.5" />
             Make Payment
@@ -127,7 +127,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             size="sm"
             onClick={() => bitcoinAddress && onNavigate('settle')}
             disabled={!bitcoinAddress}
-            className={`text-base ${activeSection === 'settle' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`text-base ${activeSection === 'settle' ? 'bg-orange-500 hover:bg-orange-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Bitcoin className="w-4 h-4 mr-1.5" />
             Settle to L1
@@ -140,7 +140,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
-            className="text-gray-400 hover:text-white hover:bg-gray-800 h-8 w-8 md:h-10 md:w-10"
+            className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8 md:h-10 md:w-10"
             data-testid="button-theme-toggle"
           >
             {theme === 'light' ? (
@@ -154,7 +154,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             <>
               <button
                 onClick={handleCopy}
-                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-gray-800/50 hover:bg-gray-700 transition-all duration-200 text-gray-300 border border-gray-700/50 hover:border-orange-500/50 backdrop-blur-sm group"
+                className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-muted/50 hover:bg-muted transition-all duration-200 text-muted-foreground border border-border hover:border-orange-500/50 backdrop-blur-sm group"
                 data-testid="button-copy-address"
               >
                 <WalletIcon className="w-3.5 h-3.5 md:w-4 md:h-4 group-hover:text-orange-500 transition-colors" />
@@ -169,7 +169,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
                 variant="outline"
                 size="sm"
                 onClick={disconnectWallet}
-                className="border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-red-500/50 text-xs md:text-sm h-8 md:h-9 transition-all duration-200"
+                className="border-border text-muted-foreground hover:bg-muted hover:text-foreground hover:border-red-500/50 text-xs md:text-sm h-8 md:h-9 transition-all duration-200"
                 data-testid="button-disconnect"
               >
                 Disconnect

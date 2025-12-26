@@ -120,7 +120,7 @@ function Header({ activeSection, onNavigate }: { activeSection: Section; onNavig
             className={`text-base ${activeSection === 'merchant' ? 'bg-orange-500 hover:bg-orange-600' : 'text-gray-300 hover:text-white hover:bg-gray-800'} ${!bitcoinAddress ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Store className="w-4 h-4 mr-1.5" />
-            Merchant Payment
+            Make Payment
           </Button>
           <Button
             variant={activeSection === 'settle' ? 'default' : 'ghost'}
@@ -2945,9 +2945,9 @@ export default function Home() {
               <div className="w-12 h-12 mx-auto rounded-full bg-orange-500 text-white flex items-center justify-center font-bold">
                 1
               </div>
-              <h3 className="font-semibold">Generate Wallet</h3>
+              <h3 className="font-semibold">Connect Wallet</h3>
               <p className="text-sm text-muted-foreground">
-                Create your Taproot address for L2 deposits
+                Your taproot address will be generated automatically for deposits
               </p>
             </div>
 
@@ -2977,7 +2977,7 @@ export default function Home() {
               </div>
               <h3 className="font-semibold">Settle to L1</h3>
               <p className="text-sm text-muted-foreground">
-                Move funds back to Bitcoin mainnet
+                Settle funds back on Bitcoin mainnet
               </p>
             </div>
           </div>
